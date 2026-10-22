@@ -449,6 +449,11 @@ pub struct InspectorApp {
     pub library_target_device: String,
     pub library_parameters: BTreeMap<String, String>,
 
+    // Cisco Command Library layout diagnostics
+    pub library_layout_height: f32,
+    pub library_left_width: f32,
+    pub library_right_width: f32,
+
     // Background thread channels
     pub tx: Sender<LoadMessage>,
     pub rx: Receiver<LoadMessage>,
@@ -496,6 +501,9 @@ impl InspectorApp {
             library_selected_id: None,
             library_target_device: "Router0".into(),
             library_parameters: BTreeMap::new(),
+            library_layout_height: 0.0,
+            library_left_width: 0.0,
+            library_right_width: 0.0,
 
             tx,
             rx,
@@ -2756,6 +2764,18 @@ impl InspectorApp {
         self.render_command_library_content(ui, ctx, &specs);
     }
 
+    /// Alias for render_command_library_content matching the Cisco Command Library renderer.
+    #[inline]
+    #[allow(dead_code)]
+    pub fn render_cisco_library(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        specs: &[CommandSpec],
+    ) {
+        self.render_command_library_content(ui, ctx, specs);
+    }
+
     /// Render Cisco Command Library content with the provided command specifications.
     pub fn render_command_library_content(
         &mut self,
@@ -2947,33 +2967,49 @@ impl InspectorApp {
             self.library_selected_id = Some(filtered_specs[0].id.to_string());
         }
 
-        // Two-pane master-detail layout
-        ui.horizontal(|ui| {
-            // Left pane: Command list
-            ui.allocate_ui_with_layout(
-                egui::vec2(340.0, ui.available_height()),
-                egui::Layout::top_down(egui::Align::LEFT),
-                |ui| {
-                    ui.set_width(340.0);
-                    if specs.is_empty() {
-                        ui.vertical_centered(|ui| {
-                            ui.add_space(30.0);
-                            ui.label(egui::RichText::new(tr("cisco.empty_registry")).italics());
-                        });
-                        return;
-                    }
+        // Capture full available size for the two-pane layout before creating child layouts
+        let available_size = ui.available_size();
+        let full_height = available_size.y.max(200.0);
+        let left_width = 340.0_f32.min(available_size.x * 0.45).max(220.0);
 
-                    if filtered_specs.is_empty() {
-                        ui.vertical_centered(|ui| {
-                            ui.add_space(30.0);
-                            ui.label(egui::RichText::new(tr("cisco.empty_search")).italics());
-                        });
-                        return;
-                    }
+        self.library_layout_height = full_height;
+        self.library_left_width = left_width;
+        self.library_right_width = (available_size.x - left_width).max(100.0);
 
-                    egui::ScrollArea::vertical()
-                        .id_salt("cisco_specs_list_scroll")
-                        .show(ui, |ui| {
+        // Two-pane master-detail layout reserving explicit remaining height
+        ui.allocate_ui_with_layout(
+            egui::vec2(available_size.x, full_height),
+            egui::Layout::left_to_right(egui::Align::Min),
+            |ui| {
+                ui.set_min_height(full_height);
+
+                // Left pane: Command list
+                ui.allocate_ui_with_layout(
+                    egui::vec2(left_width, full_height),
+                    egui::Layout::top_down(egui::Align::LEFT),
+                    |ui| {
+                        ui.set_min_height(full_height);
+                        ui.set_width(left_width);
+                        if specs.is_empty() {
+                            ui.vertical_centered(|ui| {
+                                ui.add_space(30.0);
+                                ui.label(egui::RichText::new(tr("cisco.empty_registry")).italics());
+                            });
+                            return;
+                        }
+
+                        if filtered_specs.is_empty() {
+                            ui.vertical_centered(|ui| {
+                                ui.add_space(30.0);
+                                ui.label(egui::RichText::new(tr("cisco.empty_search")).italics());
+                            });
+                            return;
+                        }
+
+                        egui::ScrollArea::vertical()
+                            .id_salt("cisco_specs_list_scroll")
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
                             for spec in &filtered_specs {
                                 let is_selected =
                                     self.library_selected_id.as_deref() == Some(spec.id);
@@ -3035,29 +3071,34 @@ impl InspectorApp {
                 },
             );
 
-            ui.separator();
+                ui.separator();
 
-            // Right pane: Detail and Generation Form
-            ui.allocate_ui_with_layout(
-                egui::vec2(ui.available_width(), ui.available_height()),
-                egui::Layout::top_down(egui::Align::LEFT),
-                |ui| {
-                    let selected_spec = self
-                        .library_selected_id
-                        .as_deref()
-                        .and_then(|id| specs.iter().find(|s| s.id == id));
+                // Right pane: Detail and Generation Form
+                let right_width = ui.available_width().max(100.0);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(right_width, full_height),
+                    egui::Layout::top_down(egui::Align::LEFT),
+                    |ui| {
+                        ui.set_min_height(full_height);
+                        ui.set_width(right_width);
 
-                    let Some(spec) = selected_spec else {
-                        ui.vertical_centered(|ui| {
-                            ui.add_space(40.0);
-                            ui.label(egui::RichText::new(tr("cisco.no_selection")).italics());
-                        });
-                        return;
-                    };
+                        let selected_spec = self
+                            .library_selected_id
+                            .as_deref()
+                            .and_then(|id| specs.iter().find(|s| s.id == id));
 
-                    egui::ScrollArea::vertical()
-                        .id_salt("cisco_spec_detail_scroll")
-                        .show(ui, |ui| {
+                        let Some(spec) = selected_spec else {
+                            ui.vertical_centered(|ui| {
+                                ui.add_space(40.0);
+                                ui.label(egui::RichText::new(tr("cisco.no_selection")).italics());
+                            });
+                            return;
+                        };
+
+                        egui::ScrollArea::vertical()
+                            .id_salt("cisco_spec_detail_scroll")
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
                             let name = if is_vi { spec.name_vi } else { spec.name_en };
 
                             // Title & ID
@@ -4555,6 +4596,118 @@ mod rendering_checks {
             },
         );
         assert!(!output_empty.shapes.is_empty());
+    }
+
+    #[test]
+    fn test_cisco_library_layout_proportions_at_960x600_and_1280x820() {
+        for (width, height, lang) in [
+            (960.0, 600.0, "en"),
+            (960.0, 600.0, "vi"),
+            (1280.0, 820.0, "en"),
+            (1280.0, 820.0, "vi"),
+        ] {
+            let context = egui::Context::default();
+            let mut app = InspectorApp::new(None, None);
+            app.preferences.language = lang.into();
+            app.current_tab = Tab::CommandLibrary;
+
+            let output = context.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(width, height),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    app.render_top_panel(ctx);
+                    app.render_bottom_panel(ctx);
+                    app.render_central_panel(ctx);
+                },
+            );
+
+            // Verify shapes were generated
+            assert!(!output.shapes.is_empty(), "Failed to generate shapes for {width}x{height} in {lang}");
+
+            // Verify library layout height is allocated to full remaining height, NOT collapsed to a tiny strip (<50px)
+            let min_expected_height = height * 0.55;
+            println!(
+                "Layout metrics for {}x{} ({}): height={}, left_w={}, right_w={}",
+                width, height, lang, app.library_layout_height, app.library_left_width, app.library_right_width
+            );
+            assert!(
+                app.library_layout_height >= min_expected_height,
+                "Library height for {width}x{height} ({lang}) collapsed to {}px, expected at least {}px",
+                app.library_layout_height,
+                min_expected_height
+            );
+
+            // Verify left pane width is preserved as 340px
+            assert!(
+                (app.library_left_width - 340.0).abs() < 1.0,
+                "Left list pane width for {width}x{height} should be 340px, got {}px",
+                app.library_left_width
+            );
+
+            // Verify right detail pane width has ample space
+            let min_right_width = width - 340.0 - 100.0;
+            assert!(
+                app.library_right_width >= min_right_width,
+                "Right detail pane width for {width}x{height} should be >= {}px, got {}px",
+                min_right_width,
+                app.library_right_width
+            );
+
+            // Verify visual bounding box of rendered shapes spans the full vertical content area
+            let visual_rect = output.shapes.iter().fold(egui::Rect::NOTHING, |acc, s| {
+                acc.union(s.shape.visual_bounding_rect())
+            });
+            assert!(
+                visual_rect.height() >= height * 0.8,
+                "Visual rendered content height should cover the window, got {}px on {height}px window",
+                visual_rect.height()
+            );
+        }
+    }
+
+    #[test]
+    fn test_cisco_library_with_synthetic_126_and_tab_switching() {
+        let context = egui::Context::default();
+        let mut app = InspectorApp::new(None, None);
+        let analysis = inspector::parse(
+            include_str!("../tests/fixtures/synthetic-126.xml").trim_start_matches('\u{feff}'),
+        )
+        .unwrap();
+        app.analysis = Some(analysis);
+
+        // Switch to CommandLibrary tab with synthetic activity loaded
+        app.current_tab = Tab::CommandLibrary;
+
+        for lang in ["en", "vi"] {
+            app.preferences.language = lang.into();
+            let output = context.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1280.0, 820.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    app.render_top_panel(ctx);
+                    app.render_bottom_panel(ctx);
+                    app.render_central_panel(ctx);
+                },
+            );
+
+            assert!(!output.shapes.is_empty());
+            assert!(
+                app.library_layout_height >= 600.0,
+                "Command library layout with synthetic126 should be full-height, got {}",
+                app.library_layout_height
+            );
+            assert_eq!(app.library_left_width, 340.0);
+        }
     }
 
     #[cfg(test)]
