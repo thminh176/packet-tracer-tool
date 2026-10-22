@@ -1,0 +1,33 @@
+# Cisco router command research
+
+Research date: 2026-10-22. Sources below were consulted before implementing each family. These are classic IOS command generators; official syntax evidence does not establish execution support in Packet Tracer. No real Packet Tracer device execution has been performed.
+
+| Family | Official Cisco source / release | Mode and validated subset | Prerequisites / verification |
+| --- | --- | --- | --- |
+| Interface IPv4, description, shutdown | [Cisco IOS IPv6 command reference, legacy IOS](https://www.cisco.com/c/en/us/td/docs/ios/ipv6/command/reference/ipv6_book/ipv6_04.html) | Interface configuration; primary IPv4 with contiguous mask; single-line description; explicit administrative state | Existing routed interface; `show ip interface brief`, `show interfaces` |
+| Interface IPv6 / link-local | [Cisco IOS IPv6 command reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipv6/command/ipv6-cr-book/ipv6-i1.html) | Interface configuration; explicit IPv6 prefix or FE80::/10 link-local | IPv6-capable interface; `show ipv6 interface` |
+| 802.1Q subinterface | [Cisco IOS LAN Switching command reference](https://www.cisco.com/c/en/us/td/docs/ios/lanswitch/command/reference/lsw_book/lsw_b1.html) | Subinterface configuration; explicit VLAN 1–4094, optional native | Supported Ethernet subinterface, peer trunk; `show interfaces` |
+| IPv4 static route | [Cisco IOS IP Routing protocol-independent reference, April 2011](https://www.cisco.com/c/en/us/td/docs/ios/iproute_pi/command/reference/iri_book/iri_pi1.html) | Global configuration; destination, contiguous mask, next hop or exit interface, distance 1–255 | Reachable next hop; `show ip route` |
+| IPv6 static route / forwarding | [Cisco IOS IPv6 command reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipv6/command/ipv6-cr-book/ipv6-i4.html) | Global configuration; explicit destination prefix, target, optional distance; link-local next hop requires interface | IPv6 routing enabled; `show ipv6 route`, `show ipv6 interface` |
+| OSPFv2 | [IOS 15M&T, Configuring OSPF](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/iproute_ospf/configuration/15-mt/iro-15-mt-book/iro-cfg.html) | `router ospf process-id`, router configuration `network address wildcard area area-id` | Explicit process and area; `show ip ospf`, `show ip ospf interface`, `show ip ospf neighbor` |
+| RIP | [IOS 15M&T, Configuring RIP](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/iproute_rip/configuration/15-mt/irr-15-mt-book/irr-cfg-info-prot.html) | `router rip`; explicit version; classful network value must be supplied, never inferred | Classic IPv4 RIP process; `show ip protocols`, `show ip route rip` |
+| EIGRP | [IOS 15.0S, Configuring EIGRP](https://www.cisco.com/en/US/docs/ios-xml/ios/iproute_eigrp/configuration/15-0s/Configuring_EIGRP.html) | Classic `router eigrp AS`, explicit network and wildcard | Explicit AS; `show ip eigrp neighbors`, `show ip protocols` |
+| Standard ACL | [IOS 15SY ACL guide](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/sec_data_acl/configuration/15-sy/sec-data-acl-15-sy-book/sec-create-ip-apply.html) | Global numbered standard ACL; interface access-group direction explicit | Review implicit deny and rule order; `show access-lists`, `show ip interface` |
+| Static NAT | [IOS XE 2 NAT guide](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipaddr_nat/configuration/xe-2/nat-xe-2-book/iadnat-addr-consv.html) | Global inside source static IPv4 mapping; interface inside/outside roles | Explicit local/global addresses and interface roles; `show ip nat translations`, `show ip nat statistics` |
+| DHCP | [IOS 15M&T DHCP server guide](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipaddr_dhcp/configuration/15-mt/dhcp-15-mt-book/config-dhcp-server.html) | Named DHCP pool, explicit network/mask; router and DNS options; exclusions | Existing subnet and exclusions supplied; `show ip dhcp pool`, `show ip dhcp binding` |
+
+## Normalization policy
+
+A bare IPv4 address is incomplete: a subnet cannot be recovered without a prefix or mask. Network-only hyphen values contain exactly address and prefix. Observed route encodings allow address-prefix-target, or address-prefix-target-0-distance; the reserved field has no verified nonzero meaning, so nonzero or extra fields are unsupported. That structural encoding is repository fixture evidence, not an official Cisco CLI notation. Malformed targets, masks, distances, host-bit destinations and trailing fields are rejected.
+
+OSPF process and area are mandatory and never default to process 1 or area 0. Invalid builder values leave the corresponding field missing; completeness is recomputed from actual fields. IPv6 link-local route targets require an exit interface. Router modules emit structured commands only, never arbitrary pasted CLI. Device feature availability still depends on the IOS image and hardware; router-only specs must not be advertised for end devices or access-only switches.
+
+VN: Chỉ tạo lệnh khi đủ dữ liệu rõ ràng; không tự suy ra mặt nạ, tiến trình OSPF hoặc vùng. Chưa kiểm chứng thực thi trên Packet Tracer.
+
+Additional command references: [IOS shutdown interface command](https://www.cisco.com/E-Learning/bulk/public/tac/cim/cib/using_cisco_ios_software/cmdrefs/shutdown.htm), [IOS 15M&T interface description](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/lanswitch/configuration/15-mt/lsw-15-mt-book/lsw-hwic-ethsw-ic.html), [IPv6 unicast-routing reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipv6/command/ipv6-cr-book/ipv6-i5.html).
+
+## Implemented scope and limits
+
+Eighteen router families are split across interface, routing and service modules. The optional service subset covers numbered standard ACL entries and explicit interface attachment, static IPv4 inside-source NAT and interface roles, DHCP network/router/DNS pool settings and address exclusions. Extended ACL parsing, PAT/dynamic NAT, authentication/SSH setup, redistribution, named EIGRP, OSPFv3, IPv6 DHCP and removal/repair workflows are not implemented. Unknown fields are rejected instead of interpreted as CLI.
+
+Known switch profiles are rejected for router addressing, routing and service families; switch SVIs and physical routed ports must use their dedicated switch workflow. Interface names validate structure, not installed modules or live hardware. No serial module presence is inferred from a router model; execution still requires interface inventory evidence. The ISR4321 IPv4 static-route handler explicitly refuses a serial exit target without that evidence. Unknown models retain the shared registry's compatibility warning.
