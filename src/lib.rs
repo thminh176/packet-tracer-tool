@@ -1,5 +1,6 @@
 #![allow(clippy::collapsible_if)]
 
+pub mod cisco;
 pub mod commands;
 pub mod inspector;
 pub mod localization;
