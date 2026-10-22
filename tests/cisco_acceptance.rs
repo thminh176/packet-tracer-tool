@@ -5,6 +5,15 @@ use pka_lab_inspector::{
     model::Checkpoint,
 };
 
+#[test]
+fn explicit_interface_separator_space_normalizes_without_accepting_controls() {
+    use cisco::parser::interface_name;
+    assert_eq!(interface_name("FastEthernet 0/1"), interface_name("Fa0/1"));
+    assert_eq!(interface_name("vlan 10"), Some("Vlan10".into()));
+    assert!(interface_name("Gi\n0/0").is_none());
+    assert!(interface_name("Gi0/0;reload").is_none());
+}
+
 fn checkpoint(property: &str, expected: &str) -> Checkpoint {
     Checkpoint {
         device: "R1".into(),

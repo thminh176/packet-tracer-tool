@@ -36,14 +36,8 @@ pub fn profile(c: &Checkpoint) -> DeviceProfile {
     };
     DeviceProfile::from_evidence(model, &c.device_type)
 }
-fn key(s: &str) -> String {
-    s.chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .flat_map(char::to_lowercase)
-        .collect()
-}
 pub fn request(c: &Checkpoint, resolved: &str) -> Option<CommandRequest> {
-    let property = key(&c.property);
+    let property = crate::commands::property_key(c);
     let t: Vec<_> = resolved.split_whitespace().collect();
     let mut req = CommandRequest {
         device: c.device.clone(),
@@ -101,7 +95,7 @@ pub fn request(c: &Checkpoint, resolved: &str) -> Option<CommandRequest> {
                 "router.interface.ipv4"
             }
         }
-        "ipv6address" => {
+        "ipv6address" | "ipv6prefixlength" => {
             put("interface", &c.interface);
             put("address", resolved);
             "router.interface.ipv6"

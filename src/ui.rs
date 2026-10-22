@@ -3010,66 +3010,68 @@ impl InspectorApp {
                             .id_salt("cisco_specs_list_scroll")
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
-                            for spec in &filtered_specs {
-                                let is_selected =
-                                    self.library_selected_id.as_deref() == Some(spec.id);
-                                let name = if is_vi { spec.name_vi } else { spec.name_en };
-                                let support = self.library_profile.support(spec.capability);
+                                for spec in &filtered_specs {
+                                    let is_selected =
+                                        self.library_selected_id.as_deref() == Some(spec.id);
+                                    let name = if is_vi { spec.name_vi } else { spec.name_en };
+                                    let support = self.library_profile.support(spec.capability);
 
-                                let item_frame = egui::Frame::NONE
-                                    .fill(if is_selected {
-                                        egui::Color32::from_rgba_unmultiplied(60, 90, 140, 60)
-                                    } else {
-                                        egui::Color32::TRANSPARENT
-                                    })
-                                    .corner_radius(egui::CornerRadius::same(4))
-                                    .inner_margin(egui::Margin::symmetric(8, 6));
+                                    let item_frame = egui::Frame::NONE
+                                        .fill(if is_selected {
+                                            egui::Color32::from_rgba_unmultiplied(60, 90, 140, 60)
+                                        } else {
+                                            egui::Color32::TRANSPARENT
+                                        })
+                                        .corner_radius(egui::CornerRadius::same(4))
+                                        .inner_margin(egui::Margin::symmetric(8, 6));
 
-                                item_frame.show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        let btn = ui.selectable_label(is_selected, name);
-                                        if btn.clicked()
-                                            && self.library_selected_id.as_deref() != Some(spec.id)
-                                        {
-                                            self.library_selected_id = Some(spec.id.to_string());
-                                            for p in &spec.parameters {
-                                                self.library_parameters
-                                                    .entry(p.name.to_string())
-                                                    .or_default();
+                                    item_frame.show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            let btn = ui.selectable_label(is_selected, name);
+                                            if btn.clicked()
+                                                && self.library_selected_id.as_deref()
+                                                    != Some(spec.id)
+                                            {
+                                                self.library_selected_id =
+                                                    Some(spec.id.to_string());
+                                                for p in &spec.parameters {
+                                                    self.library_parameters
+                                                        .entry(p.name.to_string())
+                                                        .or_default();
+                                                }
                                             }
-                                        }
-                                        ui.with_layout(
-                                            egui::Layout::right_to_left(egui::Align::Center),
-                                            |ui| {
-                                                render_cisco_support_badge(
-                                                    ui, support, &catalog, &language,
-                                                );
-                                            },
-                                        );
-                                    });
-                                    ui.horizontal(|ui| {
-                                        ui.monospace(
-                                            egui::RichText::new(spec.id).size(10.0).weak(),
-                                        );
-                                        ui.separator();
-                                        ui.label(
-                                            egui::RichText::new(
-                                                if spec.topic.starts_with("cisco.topic.") {
-                                                    tr(spec.topic)
-                                                } else {
-                                                    spec.topic.to_owned()
+                                            ui.with_layout(
+                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                |ui| {
+                                                    render_cisco_support_badge(
+                                                        ui, support, &catalog, &language,
+                                                    );
                                                 },
-                                            )
-                                            .size(10.0)
-                                            .italics(),
-                                        );
+                                            );
+                                        });
+                                        ui.horizontal(|ui| {
+                                            ui.monospace(
+                                                egui::RichText::new(spec.id).size(10.0).weak(),
+                                            );
+                                            ui.separator();
+                                            ui.label(
+                                                egui::RichText::new(
+                                                    if spec.topic.starts_with("cisco.topic.") {
+                                                        tr(spec.topic)
+                                                    } else {
+                                                        spec.topic.to_owned()
+                                                    },
+                                                )
+                                                .size(10.0)
+                                                .italics(),
+                                            );
+                                        });
                                     });
-                                });
-                                ui.separator();
-                            }
-                        });
-                },
-            );
+                                    ui.separator();
+                                }
+                            });
+                    },
+                );
 
                 ui.separator();
 
@@ -3099,380 +3101,398 @@ impl InspectorApp {
                             .id_salt("cisco_spec_detail_scroll")
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
-                            let name = if is_vi { spec.name_vi } else { spec.name_en };
+                                let name = if is_vi { spec.name_vi } else { spec.name_en };
 
-                            // Title & ID
-                            ui.heading(name);
-                            ui.horizontal(|ui| {
-                                ui.monospace(egui::RichText::new(spec.id).strong());
-                                ui.separator();
-                                ui.label(format!("{}: {}", tr("cisco.mode"), spec.mode));
-                                ui.separator();
-                                ui.label(format!(
-                                    "{}: {:?}",
-                                    tr("cisco.capability"),
-                                    spec.capability
-                                ));
-                            });
-                            ui.add_space(6.0);
-
-                            // Profile Support Banner
-                            let support = self.library_profile.support(spec.capability);
-                            let (bg_color, fg_color, border_color, notice_key) = match support {
-                                SupportState::VerifiedPacketTracer => (
-                                    egui::Color32::from_rgb(27, 94, 32),
-                                    egui::Color32::from_rgb(200, 230, 201),
-                                    egui::Color32::from_rgb(76, 175, 80),
-                                    "cisco.support_notice_verified",
-                                ),
-                                SupportState::DocumentedNotTested => (
-                                    egui::Color32::from_rgb(13, 71, 161),
-                                    egui::Color32::from_rgb(187, 222, 251),
-                                    egui::Color32::from_rgb(33, 150, 243),
-                                    "cisco.support_notice_not_tested",
-                                ),
-                                SupportState::Unsupported => (
-                                    egui::Color32::from_rgb(183, 28, 28),
-                                    egui::Color32::from_rgb(255, 205, 210),
-                                    egui::Color32::from_rgb(244, 67, 54),
-                                    "cisco.support_notice_unsupported",
-                                ),
-                                SupportState::Unknown => (
-                                    egui::Color32::from_rgb(66, 66, 66),
-                                    egui::Color32::from_rgb(224, 224, 224),
-                                    egui::Color32::from_rgb(158, 158, 158),
-                                    "cisco.support_notice_unknown",
-                                ),
-                            };
-
-                            egui::Frame::NONE
-                                .fill(bg_color)
-                                .stroke(egui::Stroke::new(1.0_f32, border_color))
-                                .corner_radius(egui::CornerRadius::same(4))
-                                .inner_margin(egui::Margin::symmetric(10, 8))
-                                .show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        render_cisco_support_badge(
-                                            ui, support, &catalog, &language,
-                                        );
-                                        ui.label(
-                                            egui::RichText::new(format!(
-                                                "{}: {}",
-                                                self.library_profile.label(),
-                                                tr(notice_key)
-                                            ))
-                                            .color(fg_color),
-                                        );
-                                    });
+                                // Title & ID
+                                ui.heading(name);
+                                ui.horizontal(|ui| {
+                                    ui.monospace(egui::RichText::new(spec.id).strong());
+                                    ui.separator();
+                                    ui.label(format!("{}: {}", tr("cisco.mode"), spec.mode));
+                                    ui.separator();
+                                    ui.label(format!(
+                                        "{}: {:?}",
+                                        tr("cisco.capability"),
+                                        spec.capability
+                                    ));
                                 });
-                            ui.add_space(8.0);
+                                ui.add_space(6.0);
 
-                            // Syntax Box
-                            ui.strong(tr("cisco.syntax"));
-                            egui::Frame::NONE
-                                .fill(egui::Color32::from_rgb(20, 24, 30))
-                                .corner_radius(egui::CornerRadius::same(4))
-                                .inner_margin(egui::Margin::symmetric(10, 6))
-                                .show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.monospace(
-                                            egui::RichText::new(spec.syntax)
-                                                .color(egui::Color32::from_rgb(144, 202, 249)),
-                                        );
-                                        ui.with_layout(
-                                            egui::Layout::right_to_left(egui::Align::Center),
-                                            |ui| {
-                                                if ui.button(tr("action.copy")).clicked() {
-                                                    do_copy = Some((
-                                                        spec.syntax.to_string(),
-                                                        tr("cisco.syntax").to_string(),
-                                                    ));
-                                                }
-                                            },
-                                        );
-                                    });
-                                });
-                            ui.add_space(8.0);
+                                // Profile Support Banner
+                                let support = self.library_profile.support(spec.capability);
+                                let (bg_color, fg_color, border_color, notice_key) = match support {
+                                    SupportState::VerifiedPacketTracer => (
+                                        egui::Color32::from_rgb(27, 94, 32),
+                                        egui::Color32::from_rgb(200, 230, 201),
+                                        egui::Color32::from_rgb(76, 175, 80),
+                                        "cisco.support_notice_verified",
+                                    ),
+                                    SupportState::DocumentedNotTested => (
+                                        egui::Color32::from_rgb(13, 71, 161),
+                                        egui::Color32::from_rgb(187, 222, 251),
+                                        egui::Color32::from_rgb(33, 150, 243),
+                                        "cisco.support_notice_not_tested",
+                                    ),
+                                    SupportState::Unsupported => (
+                                        egui::Color32::from_rgb(183, 28, 28),
+                                        egui::Color32::from_rgb(255, 205, 210),
+                                        egui::Color32::from_rgb(244, 67, 54),
+                                        "cisco.support_notice_unsupported",
+                                    ),
+                                    SupportState::Unknown => (
+                                        egui::Color32::from_rgb(66, 66, 66),
+                                        egui::Color32::from_rgb(224, 224, 224),
+                                        egui::Color32::from_rgb(158, 158, 158),
+                                        "cisco.support_notice_unknown",
+                                    ),
+                                };
 
-                            // Source Documentation & Link Click
-                            ui.horizontal(|ui| {
-                                ui.strong(format!("{}:", tr("cisco.source")));
-                                if spec.source.starts_with("http://")
-                                    || spec.source.starts_with("https://")
-                                {
-                                    ui.hyperlink_to(spec.source, spec.source);
-                                    if ui.small_button(tr("action.copy")).clicked() {
-                                        do_copy = Some((
-                                            spec.source.to_string(),
-                                            tr("cisco.source_copied").to_string(),
-                                        ));
-                                    }
-                                } else {
-                                    ui.label(spec.source);
-                                    if ui.small_button(tr("action.copy")).clicked() {
-                                        do_copy = Some((
-                                            spec.source.to_string(),
-                                            tr("cisco.source_copied").to_string(),
-                                        ));
-                                    }
-                                }
-                            });
-                            ui.add_space(8.0);
-
-                            // Prerequisites
-                            ui.strong(tr("cisco.prerequisites"));
-                            if spec.prerequisites.is_empty() {
-                                ui.label(egui::RichText::new(tr("cisco.no_prerequisites")).weak());
-                            } else {
-                                for prereq in &spec.prerequisites {
-                                    ui.label(format!("• {prereq}"));
-                                }
-                            }
-                            ui.add_space(8.0);
-
-                            // Verification Commands
-                            ui.horizontal(|ui| {
-                                ui.strong(tr("cisco.verification"));
-                                if !spec.verification.is_empty()
-                                    && ui.small_button(tr("cisco.copy_verification")).clicked()
-                                {
-                                    let joined = spec.verification.join("\n");
-                                    do_copy =
-                                        Some((joined, tr("cisco.verification_copied").to_string()));
-                                }
-                            });
-                            if spec.verification.is_empty() {
-                                ui.label(egui::RichText::new(tr("cisco.no_verification")).weak());
-                            } else {
-                                for vcmd in &spec.verification {
-                                    ui.horizontal(|ui| {
-                                        ui.monospace(format!("  {vcmd}"));
-                                        if ui.small_button(tr("action.copy")).clicked() {
-                                            do_copy = Some((
-                                                vcmd.to_string(),
-                                                tr("action.copied").to_string(),
-                                            ));
-                                        }
-                                    });
-                                }
-                            }
-                            ui.add_space(10.0);
-
-                            // Parameter Form
-                            ui.label(
-                                egui::RichText::new(tr("cisco.example_notice"))
-                                    .small()
-                                    .weak(),
-                            );
-                            ui.horizontal(|ui| {
-                                ui.heading(tr("cisco.parameters"));
-                                if !spec.parameters.is_empty() {
-                                    if ui.button(tr("cisco.fill_all_examples")).clicked() {
-                                        self.library_parameters =
-                                            cisco::example_request(spec, self.library_profile)
-                                                .parameters;
-                                    }
-                                    if ui.button(tr("cisco.reset_parameters")).clicked() {
-                                        self.library_parameters.clear();
-                                    }
-                                }
-                            });
-
-                            if spec.parameters.is_empty() {
-                                ui.label(egui::RichText::new(tr("cisco.no_parameters")).weak());
-                            } else {
-                                egui::Grid::new("cisco_parameters_form_grid")
-                                    .num_columns(4)
-                                    .spacing([12.0, 8.0])
-                                    .show(ui, |ui| {
-                                        for p in &spec.parameters {
-                                            // Column 1: Name and Required tag
-                                            ui.horizontal(|ui| {
-                                                ui.strong(p.name);
-                                                if p.required {
-                                                    ui.label(
-                                                        egui::RichText::new(format!(
-                                                            "[{}]",
-                                                            tr("cisco.param_required")
-                                                        ))
-                                                        .color(egui::Color32::from_rgb(229, 57, 53))
-                                                        .strong(),
-                                                    );
-                                                } else {
-                                                    ui.label(
-                                                        egui::RichText::new(format!(
-                                                            "[{}]",
-                                                            tr("cisco.param_optional")
-                                                        ))
-                                                        .weak(),
-                                                    );
-                                                }
-                                            });
-
-                                            // Column 2: Input TextEdit
-                                            let val_entry = self
-                                                .library_parameters
-                                                .entry(p.name.to_string())
-                                                .or_default();
-                                            ui.add(
-                                                egui::TextEdit::singleline(val_entry)
-                                                    .desired_width(180.0),
-                                            );
-
-                                            // Column 3: Use Example button
-                                            if ui
-                                                .small_button(tr("cisco.use_example"))
-                                                .on_hover_text(p.example)
-                                                .clicked()
-                                            {
-                                                self.library_parameters.insert(
-                                                    p.name.to_string(),
-                                                    p.example.to_string(),
-                                                );
-                                            }
-
-                                            // Column 4: Localized Description & Example
-                                            let desc = if is_vi {
-                                                p.description_vi
-                                            } else {
-                                                p.description_en
-                                            };
-                                            let ex_str = tf(
-                                                "cisco.param_example",
-                                                &[("example", p.example)],
-                                            );
-                                            ui.label(format!("{desc} ({ex_str})"));
-
-                                            ui.end_row();
-                                        }
-                                    });
-                            }
-                            ui.add_space(12.0);
-
-                            // Command Plan Generation
-                            let req = CommandRequest {
-                                family: spec.id.to_string(),
-                                device: self.library_target_device.clone(),
-                                profile: self.library_profile,
-                                parameters: self.library_parameters.clone(),
-                            };
-                            let plan = cisco::generate(&req);
-
-                            ui.separator();
-                            ui.horizontal(|ui| {
-                                ui.heading(tr("cisco.preview_title"));
-                                if plan.executable() && ui.button(tr("cisco.copy_script")).clicked()
-                                {
-                                    let script = plan.script();
-                                    do_copy = Some((script, tr("cisco.script_copied").to_string()));
-                                }
-                            });
-
-                            if plan.executable() {
-                                ui.label(
-                                    egui::RichText::new(tr("ui.paste_target_notice"))
-                                        .weak()
-                                        .italics(),
-                                );
                                 egui::Frame::NONE
-                                    .fill(egui::Color32::from_rgb(18, 22, 28))
-                                    .stroke(egui::Stroke::new(
-                                        1.0_f32,
-                                        egui::Color32::from_rgb(46, 125, 50),
-                                    ))
+                                    .fill(bg_color)
+                                    .stroke(egui::Stroke::new(1.0_f32, border_color))
                                     .corner_radius(egui::CornerRadius::same(4))
                                     .inner_margin(egui::Margin::symmetric(10, 8))
                                     .show(ui, |ui| {
-                                        let mut script = plan.script();
-                                        let rows = script.lines().count().clamp(3, 14);
-                                        ui.add(
-                                            egui::TextEdit::multiline(&mut script)
-                                                .font(egui::TextStyle::Monospace)
-                                                .code_editor()
-                                                .desired_width(f32::INFINITY)
-                                                .desired_rows(rows),
-                                        );
-                                    });
-                            } else {
-                                ui.label(
-                                    egui::RichText::new(tr("cisco.not_executable"))
-                                        .color(egui::Color32::from_rgb(255, 179, 0))
-                                        .italics(),
-                                );
-
-                                // Missing parameters
-                                if !plan.missing_parameters.is_empty() {
-                                    egui::Frame::NONE
-                                        .fill(egui::Color32::from_rgb(40, 15, 15))
-                                        .corner_radius(egui::CornerRadius::same(4))
-                                        .inner_margin(egui::Margin::symmetric(8, 6))
-                                        .show(ui, |ui| {
-                                            ui.strong(
-                                                egui::RichText::new(tr("cisco.missing_parameters"))
-                                                    .color(egui::Color32::from_rgb(239, 83, 80)),
+                                        ui.horizontal(|ui| {
+                                            render_cisco_support_badge(
+                                                ui, support, &catalog, &language,
                                             );
-                                            for mp in &plan.missing_parameters {
-                                                ui.label(
-                                                    egui::RichText::new(format!("  • {mp}")).color(
-                                                        egui::Color32::from_rgb(255, 205, 210),
-                                                    ),
-                                                );
-                                            }
+                                            ui.label(
+                                                egui::RichText::new(format!(
+                                                    "{}: {}",
+                                                    self.library_profile.label(),
+                                                    tr(notice_key)
+                                                ))
+                                                .color(fg_color),
+                                            );
                                         });
-                                    ui.add_space(4.0);
-                                }
+                                    });
+                                ui.add_space(8.0);
 
-                                // Warnings
-                                if !plan.warnings.is_empty() {
-                                    egui::Frame::NONE
-                                        .fill(egui::Color32::from_rgb(45, 35, 15))
-                                        .corner_radius(egui::CornerRadius::same(4))
-                                        .inner_margin(egui::Margin::symmetric(8, 6))
-                                        .show(ui, |ui| {
-                                            ui.strong(
-                                                egui::RichText::new(tr("cisco.warnings"))
-                                                    .color(egui::Color32::from_rgb(255, 183, 77)),
+                                // Syntax Box
+                                ui.strong(tr("cisco.syntax"));
+                                egui::Frame::NONE
+                                    .fill(egui::Color32::from_rgb(20, 24, 30))
+                                    .corner_radius(egui::CornerRadius::same(4))
+                                    .inner_margin(egui::Margin::symmetric(10, 6))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.monospace(
+                                                egui::RichText::new(spec.syntax)
+                                                    .color(egui::Color32::from_rgb(144, 202, 249)),
                                             );
-                                            for w in &plan.warnings {
-                                                ui.label(format!(
-                                                    "  • {}",
-                                                    catalog.message(&language, w)
+                                            ui.with_layout(
+                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                |ui| {
+                                                    if ui.button(tr("action.copy")).clicked() {
+                                                        do_copy = Some((
+                                                            spec.syntax.to_string(),
+                                                            tr("cisco.syntax").to_string(),
+                                                        ));
+                                                    }
+                                                },
+                                            );
+                                        });
+                                    });
+                                ui.add_space(8.0);
+
+                                // Source Documentation & Link Click
+                                ui.horizontal(|ui| {
+                                    ui.strong(format!("{}:", tr("cisco.source")));
+                                    if spec.source.starts_with("http://")
+                                        || spec.source.starts_with("https://")
+                                    {
+                                        ui.hyperlink_to(spec.source, spec.source);
+                                        if ui.small_button(tr("action.copy")).clicked() {
+                                            do_copy = Some((
+                                                spec.source.to_string(),
+                                                tr("cisco.source_copied").to_string(),
+                                            ));
+                                        }
+                                    } else {
+                                        ui.label(spec.source);
+                                        if ui.small_button(tr("action.copy")).clicked() {
+                                            do_copy = Some((
+                                                spec.source.to_string(),
+                                                tr("cisco.source_copied").to_string(),
+                                            ));
+                                        }
+                                    }
+                                });
+                                ui.add_space(8.0);
+
+                                // Prerequisites
+                                ui.strong(tr("cisco.prerequisites"));
+                                if spec.prerequisites.is_empty() {
+                                    ui.label(
+                                        egui::RichText::new(tr("cisco.no_prerequisites")).weak(),
+                                    );
+                                } else {
+                                    for prereq in &spec.prerequisites {
+                                        ui.label(format!("• {prereq}"));
+                                    }
+                                }
+                                ui.add_space(8.0);
+
+                                // Verification Commands
+                                ui.horizontal(|ui| {
+                                    ui.strong(tr("cisco.verification"));
+                                    if !spec.verification.is_empty()
+                                        && ui.small_button(tr("cisco.copy_verification")).clicked()
+                                    {
+                                        let joined = spec.verification.join("\n");
+                                        do_copy = Some((
+                                            joined,
+                                            tr("cisco.verification_copied").to_string(),
+                                        ));
+                                    }
+                                });
+                                if spec.verification.is_empty() {
+                                    ui.label(
+                                        egui::RichText::new(tr("cisco.no_verification")).weak(),
+                                    );
+                                } else {
+                                    for vcmd in &spec.verification {
+                                        ui.horizontal(|ui| {
+                                            ui.monospace(format!("  {vcmd}"));
+                                            if ui.small_button(tr("action.copy")).clicked() {
+                                                do_copy = Some((
+                                                    vcmd.to_string(),
+                                                    tr("action.copied").to_string(),
                                                 ));
                                             }
                                         });
-                                    ui.add_space(4.0);
-                                }
-
-                                // Conflicts
-                                if !plan.conflicts.is_empty() {
-                                    egui::Frame::NONE
-                                        .fill(egui::Color32::from_rgb(45, 20, 20))
-                                        .corner_radius(egui::CornerRadius::same(4))
-                                        .inner_margin(egui::Margin::symmetric(8, 6))
-                                        .show(ui, |ui| {
-                                            ui.strong(
-                                                egui::RichText::new(tr("cisco.conflicts"))
-                                                    .color(egui::Color32::from_rgb(239, 83, 80)),
-                                            );
-                                            for c in &plan.conflicts {
-                                                ui.label(format!("  • {c}"));
-                                            }
-                                        });
-                                    ui.add_space(4.0);
-                                }
-
-                                // Evidence
-                                if !plan.evidence.is_empty() {
-                                    ui.strong(tr("cisco.evidence"));
-                                    for ev in &plan.evidence {
-                                        ui.label(format!("  • {ev}"));
                                     }
                                 }
-                            }
-                        });
-                },
-            );
-        });
+                                ui.add_space(10.0);
+
+                                // Parameter Form
+                                ui.label(
+                                    egui::RichText::new(tr("cisco.example_notice"))
+                                        .small()
+                                        .weak(),
+                                );
+                                ui.horizontal(|ui| {
+                                    ui.heading(tr("cisco.parameters"));
+                                    if !spec.parameters.is_empty() {
+                                        if ui.button(tr("cisco.fill_all_examples")).clicked() {
+                                            self.library_parameters =
+                                                cisco::example_request(spec, self.library_profile)
+                                                    .parameters;
+                                        }
+                                        if ui.button(tr("cisco.reset_parameters")).clicked() {
+                                            self.library_parameters.clear();
+                                        }
+                                    }
+                                });
+
+                                if spec.parameters.is_empty() {
+                                    ui.label(egui::RichText::new(tr("cisco.no_parameters")).weak());
+                                } else {
+                                    egui::Grid::new("cisco_parameters_form_grid")
+                                        .num_columns(4)
+                                        .spacing([12.0, 8.0])
+                                        .show(ui, |ui| {
+                                            for p in &spec.parameters {
+                                                // Column 1: Name and Required tag
+                                                ui.horizontal(|ui| {
+                                                    ui.strong(p.name);
+                                                    if p.required {
+                                                        ui.label(
+                                                            egui::RichText::new(format!(
+                                                                "[{}]",
+                                                                tr("cisco.param_required")
+                                                            ))
+                                                            .color(egui::Color32::from_rgb(
+                                                                229, 57, 53,
+                                                            ))
+                                                            .strong(),
+                                                        );
+                                                    } else {
+                                                        ui.label(
+                                                            egui::RichText::new(format!(
+                                                                "[{}]",
+                                                                tr("cisco.param_optional")
+                                                            ))
+                                                            .weak(),
+                                                        );
+                                                    }
+                                                });
+
+                                                // Column 2: Input TextEdit
+                                                let val_entry = self
+                                                    .library_parameters
+                                                    .entry(p.name.to_string())
+                                                    .or_default();
+                                                ui.add(
+                                                    egui::TextEdit::singleline(val_entry)
+                                                        .desired_width(180.0),
+                                                );
+
+                                                // Column 3: Use Example button
+                                                if ui
+                                                    .small_button(tr("cisco.use_example"))
+                                                    .on_hover_text(p.example)
+                                                    .clicked()
+                                                {
+                                                    self.library_parameters.insert(
+                                                        p.name.to_string(),
+                                                        p.example.to_string(),
+                                                    );
+                                                }
+
+                                                // Column 4: Localized Description & Example
+                                                let desc = if is_vi {
+                                                    p.description_vi
+                                                } else {
+                                                    p.description_en
+                                                };
+                                                let ex_str = tf(
+                                                    "cisco.param_example",
+                                                    &[("example", p.example)],
+                                                );
+                                                ui.label(format!("{desc} ({ex_str})"));
+
+                                                ui.end_row();
+                                            }
+                                        });
+                                }
+                                ui.add_space(12.0);
+
+                                // Command Plan Generation
+                                let req = CommandRequest {
+                                    family: spec.id.to_string(),
+                                    device: self.library_target_device.clone(),
+                                    profile: self.library_profile,
+                                    parameters: self.library_parameters.clone(),
+                                };
+                                let plan = cisco::generate(&req);
+
+                                ui.separator();
+                                ui.horizontal(|ui| {
+                                    ui.heading(tr("cisco.preview_title"));
+                                    if plan.executable()
+                                        && ui.button(tr("cisco.copy_script")).clicked()
+                                    {
+                                        let script = plan.script();
+                                        do_copy =
+                                            Some((script, tr("cisco.script_copied").to_string()));
+                                    }
+                                });
+
+                                if plan.executable() {
+                                    ui.label(
+                                        egui::RichText::new(tr("ui.paste_target_notice"))
+                                            .weak()
+                                            .italics(),
+                                    );
+                                    egui::Frame::NONE
+                                        .fill(egui::Color32::from_rgb(18, 22, 28))
+                                        .stroke(egui::Stroke::new(
+                                            1.0_f32,
+                                            egui::Color32::from_rgb(46, 125, 50),
+                                        ))
+                                        .corner_radius(egui::CornerRadius::same(4))
+                                        .inner_margin(egui::Margin::symmetric(10, 8))
+                                        .show(ui, |ui| {
+                                            let mut script = plan.script();
+                                            let rows = script.lines().count().clamp(3, 14);
+                                            ui.add(
+                                                egui::TextEdit::multiline(&mut script)
+                                                    .font(egui::TextStyle::Monospace)
+                                                    .code_editor()
+                                                    .desired_width(f32::INFINITY)
+                                                    .desired_rows(rows),
+                                            );
+                                        });
+                                } else {
+                                    ui.label(
+                                        egui::RichText::new(tr("cisco.not_executable"))
+                                            .color(egui::Color32::from_rgb(255, 179, 0))
+                                            .italics(),
+                                    );
+
+                                    // Missing parameters
+                                    if !plan.missing_parameters.is_empty() {
+                                        egui::Frame::NONE
+                                            .fill(egui::Color32::from_rgb(40, 15, 15))
+                                            .corner_radius(egui::CornerRadius::same(4))
+                                            .inner_margin(egui::Margin::symmetric(8, 6))
+                                            .show(ui, |ui| {
+                                                ui.strong(
+                                                    egui::RichText::new(tr(
+                                                        "cisco.missing_parameters",
+                                                    ))
+                                                    .color(egui::Color32::from_rgb(239, 83, 80)),
+                                                );
+                                                for mp in &plan.missing_parameters {
+                                                    ui.label(
+                                                        egui::RichText::new(format!("  • {mp}"))
+                                                            .color(egui::Color32::from_rgb(
+                                                                255, 205, 210,
+                                                            )),
+                                                    );
+                                                }
+                                            });
+                                        ui.add_space(4.0);
+                                    }
+
+                                    // Warnings
+                                    if !plan.warnings.is_empty() {
+                                        egui::Frame::NONE
+                                            .fill(egui::Color32::from_rgb(45, 35, 15))
+                                            .corner_radius(egui::CornerRadius::same(4))
+                                            .inner_margin(egui::Margin::symmetric(8, 6))
+                                            .show(ui, |ui| {
+                                                ui.strong(
+                                                    egui::RichText::new(tr("cisco.warnings"))
+                                                        .color(egui::Color32::from_rgb(
+                                                            255, 183, 77,
+                                                        )),
+                                                );
+                                                for w in &plan.warnings {
+                                                    ui.label(format!(
+                                                        "  • {}",
+                                                        catalog.message(&language, w)
+                                                    ));
+                                                }
+                                            });
+                                        ui.add_space(4.0);
+                                    }
+
+                                    // Conflicts
+                                    if !plan.conflicts.is_empty() {
+                                        egui::Frame::NONE
+                                            .fill(egui::Color32::from_rgb(45, 20, 20))
+                                            .corner_radius(egui::CornerRadius::same(4))
+                                            .inner_margin(egui::Margin::symmetric(8, 6))
+                                            .show(ui, |ui| {
+                                                ui.strong(
+                                                    egui::RichText::new(tr("cisco.conflicts"))
+                                                        .color(egui::Color32::from_rgb(
+                                                            239, 83, 80,
+                                                        )),
+                                                );
+                                                for c in &plan.conflicts {
+                                                    ui.label(format!("  • {c}"));
+                                                }
+                                            });
+                                        ui.add_space(4.0);
+                                    }
+
+                                    // Evidence
+                                    if !plan.evidence.is_empty() {
+                                        ui.strong(tr("cisco.evidence"));
+                                        for ev in &plan.evidence {
+                                            ui.label(format!("  • {ev}"));
+                                        }
+                                    }
+                                }
+                            });
+                    },
+                );
+            },
+        );
 
         if let Some((text, label)) = do_copy {
             self.copy_text_with_feedback(ctx, text, &label);
@@ -4627,13 +4647,21 @@ mod rendering_checks {
             );
 
             // Verify shapes were generated
-            assert!(!output.shapes.is_empty(), "Failed to generate shapes for {width}x{height} in {lang}");
+            assert!(
+                !output.shapes.is_empty(),
+                "Failed to generate shapes for {width}x{height} in {lang}"
+            );
 
             // Verify library layout height is allocated to full remaining height, NOT collapsed to a tiny strip (<50px)
             let min_expected_height = height * 0.55;
             println!(
                 "Layout metrics for {}x{} ({}): height={}, left_w={}, right_w={}",
-                width, height, lang, app.library_layout_height, app.library_left_width, app.library_right_width
+                width,
+                height,
+                lang,
+                app.library_layout_height,
+                app.library_left_width,
+                app.library_right_width
             );
             assert!(
                 app.library_layout_height >= min_expected_height,

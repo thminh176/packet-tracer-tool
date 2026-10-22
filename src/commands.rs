@@ -18,6 +18,21 @@ fn key(s: &str) -> String {
         .flat_map(char::to_lowercase)
         .collect()
 }
+pub(crate) fn ipv6_address_context(path: &str) -> bool {
+    path.split(" / ")
+        .any(|part| matches!(key(part).as_str(), "ipv6address" | "ipv6addresses"))
+}
+/// Preserve raw labels while resolving documented address-field context.
+pub(crate) fn property_key(c: &Checkpoint) -> String {
+    let p = key(&c.property);
+    match p.as_str() {
+        "ipaddress" if ipv6_address_context(&c.path) => "ipv6address".into(),
+        "prefixlength" if ipv6_address_context(&c.path) => "ipv6prefixlength".into(),
+        "linklocal" => "ipv6linklocal".into(),
+        "defaultgatewayipv6" => "ipv6defaultgateway".into(),
+        _ => p,
+    }
+}
 fn token(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 128
@@ -138,7 +153,7 @@ pub fn is_ipv6_static_route_property(property: &str, path: &str) -> bool {
     let p = key(property);
     let path_k = key(path);
     p.contains("ipv6staticroute")
-        || path_k.contains("routesv6")
+        || (path_k.contains("routesv6") && (p.starts_with("route") || p.starts_with("staticroute")))
         || (p.contains("route") && (p.contains("v6") || path_k.contains("v6")))
 }
 
@@ -153,6 +168,12 @@ pub fn is_ospf_network_property(property: &str, path: &str) -> bool {
 // The inspector may attach a uniquely matched explicit sibling requirement.
 // Evidence is never interpreted as raw CLI or mined for arbitrary numbers.
 pub(crate) fn explicit_value(c: &Checkpoint) -> Result<String, &'static str> {
+    if c.evidence
+        .iter()
+        .any(|e| e.starts_with("commands:context-conflict="))
+    {
+        return Err("Conflicting explicit sibling address or prefix context");
+    }
     if key(&format!("{} {}", c.property, c.path)).contains("ospfv3") {
         return Err(
             "OSPFv3 has different IPv6 process/interface semantics and is not supported by the OSPFv2 workflow",
@@ -169,7 +190,26 @@ pub(crate) fn explicit_value(c: &Checkpoint) -> Result<String, &'static str> {
     }) {
         return Err("Unsupported assessment check type; no reliable configuration requirement.");
     }
-    let property = key(&c.property);
+    let property = property_key(c);
+    if property == "ipv6prefixlength" {
+        if !number(c.expected.trim(), 0, 128) {
+            return Err("Invalid explicit IPv6 prefix length");
+        }
+        let addresses: std::collections::BTreeSet<_> = c
+            .evidence
+            .iter()
+            .filter_map(|e| e.strip_prefix("commands:ipv6-address="))
+            .collect();
+        if addresses.len() != 1 {
+            return Err("IPv6 prefix requires one explicit sibling address");
+        }
+        let address = addresses
+            .first()
+            .unwrap()
+            .parse::<Ipv6Addr>()
+            .map_err(|_| "Invalid explicit IPv6 sibling address")?;
+        return Ok(format!("{address}/{}", c.expected.trim()));
+    }
     if is_static_route_property(&c.property, &c.path) {
         if let Ok(mut r) = crate::network_values::ParsedStaticRoute::parse(&c.expected) {
             let targets: std::collections::BTreeSet<_> = c
@@ -379,7 +419,7 @@ fn plan(c: &Checkpoint) -> Result<Plan, &'static str> {
             "Missing, unknown, or sentinel expected value; explicit configuration is required.",
         );
     }
-    let p = key(&c.property);
+    let p = property_key(c);
     let profile = crate::cisco::mapping::profile(c);
     use crate::cisco::DeviceProfile;
     if matches!(
@@ -451,6 +491,7 @@ fn plan(c: &Checkpoint) -> Result<Plan, &'static str> {
             | "ipaddress"
             | "subnetmask"
             | "ipv6address"
+            | "ipv6prefixlength"
             | "ipv6linklocal"
             | "linklocaladdress"
             | "switchportmode"
@@ -491,7 +532,9 @@ fn plan(c: &Checkpoint) -> Result<Plan, &'static str> {
         "ipaddress" | "ipv4address" | "subnetmask" if t.len() == 2 && ip(t[0]) && mask(t[1]) => {
             format!("ip address {} {}", t[0], t[1])
         }
-        "ipv6address" if t.len() == 1 && prefix6(t[0]) => format!("ipv6 address {value}"),
+        "ipv6address" | "ipv6prefixlength" if t.len() == 1 && prefix6(t[0]) => {
+            format!("ipv6 address {value}")
+        }
         "ipv6linklocal" | "linklocaladdress"
             if t.len() == 1
                 && t[0]
@@ -731,18 +774,18 @@ pub fn generate(checkpoint: &Checkpoint) -> Command {
         return unsupported(reason);
     }
     if is_gui(checkpoint) {
-        let property = key(&checkpoint.property);
+        let property = property_key(checkpoint);
         let valid = match property.as_str() {
             "ipv4address" | "ipaddress" => {
                 let t: Vec<_> = resolved.split_whitespace().collect();
                 t.len() == 2 && ip(t[0]) && mask(t[1])
             }
-            "defaultgateway" | "gateway" | "dnsserver" => {
+            "defaultgateway" | "gateway" | "dnsserver" | "ipv6defaultgateway" => {
                 ip(checkpoint.expected.trim())
                     || checkpoint.expected.trim().parse::<Ipv6Addr>().is_ok()
             }
             "subnetmask" => mask(checkpoint.expected.trim()),
-            "ipv6address" => prefix6(resolved.trim()),
+            "ipv6address" | "ipv6prefixlength" => prefix6(resolved.trim()),
             _ => false,
         };
         return if valid {
@@ -752,7 +795,7 @@ pub fn generate(checkpoint: &Checkpoint) -> Command {
                 text: format!(
                     "Desktop > IP Configuration: set {} to {}.",
                     checkpoint.property,
-                    if property == "subnetmask" {
+                    if matches!(property.as_str(), "subnetmask" | "ipv6prefixlength") {
                         checkpoint.expected.as_str()
                     } else {
                         resolved.as_str()
@@ -871,7 +914,7 @@ fn conflict_key(c: &Checkpoint, p: &Plan) -> Option<String> {
     {
         return None;
     }
-    let mut property = key(&c.property);
+    let mut property = property_key(c);
     let t: Vec<_> = c.expected.split_whitespace().collect();
     if is_static_route_property(&c.property, &c.path) {
         if let Some(line) = p.lines.first() {
@@ -926,6 +969,7 @@ fn conflict_key(c: &Checkpoint, p: &Plan) -> Option<String> {
             property = "interface-state".into()
         }
         "ipaddress" | "ipv4address" => property = "ipv4address".into(),
+        "ipv6prefixlength" => property = "ipv6address".into(),
         "subnetmask"
             if !p
                 .context
@@ -941,6 +985,18 @@ fn conflict_key(c: &Checkpoint, p: &Plan) -> Option<String> {
     }
     if property == "localuser" {
         property.push_str(c.expected.split_whitespace().next().unwrap_or(""));
+    }
+    // Several IPv6 addresses may coexist on an interface. Only differing
+    // prefixes for the same address are contradictory scalar requirements.
+    if property == "ipv6address"
+        && let Some(address) = p
+            .lines
+            .iter()
+            .find_map(|line| line.strip_prefix("ipv6 address "))
+        && let Some((address, _)) = address.split_once('/')
+        && let Ok(address) = address.parse::<Ipv6Addr>()
+    {
+        property = format!("ipv6address:{address}");
     }
     Some(format!("{}:{property}", p.context.join("/")))
 }

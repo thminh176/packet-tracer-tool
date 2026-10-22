@@ -178,9 +178,6 @@ pub fn generate(req: &CommandRequest) -> Result<Vec<ModeCommand>, String> {
             if (1002..=1005).contains(&vlan) {
                 return Err("Access and voice VLANs cannot use reserved VLANs 1002-1005".into());
             }
-            if req.family == "switch.voice_vlan" && vlan == 1 {
-                return Err("Voice VLAN cannot be VLAN 1".into());
-            }
             Ok(iface(format!(
                 "switchport {} vlan {}",
                 if req.family == "switch.access_vlan" {

@@ -150,7 +150,11 @@ fn access_and_voice_require_explicit_access_context() {
         reject(&set(&example("switch.access_vlan"), "vlan", reserved));
         reject(&set(&example("switch.voice_vlan"), "vlan", reserved));
     }
-    reject(&set(&example("switch.voice_vlan"), "vlan", "1"));
+    assert!(
+        ready(&set(&example("switch.voice_vlan"), "vlan", "1"))
+            .script()
+            .contains("switchport voice vlan 1")
+    );
 }
 #[test]
 fn mode_conversion_uses_device_encapsulation_and_never_guesses_l3() {
@@ -200,9 +204,19 @@ fn trunk_operations_and_native_peer_consistency() {
     }
     let native = example("switch.trunk_native");
     let native_plan = ready(&native);
-    assert!(native_plan.verification.iter().any(|v| v == "show interfaces trunk"));
+    assert!(
+        native_plan
+            .verification
+            .iter()
+            .any(|v| v == "show interfaces trunk")
+    );
     let allowed_plan = ready(&req);
-    assert!(allowed_plan.verification.iter().any(|v| v == "show interfaces trunk"));
+    assert!(
+        allowed_plan
+            .verification
+            .iter()
+            .any(|v| v == "show interfaces trunk")
+    );
     reject(&set(&native, "peer_native_vlan", "20"));
     reject(&set(&native, "interface_mode", "access"));
 }
@@ -224,7 +238,12 @@ fn stp_enums_steps_and_boundaries() {
         reject(&set(&port, "priority", n));
     }
     let invalid_port_plan = cisco::generate(&set(&port, "priority", "17"));
-    assert!(invalid_port_plan.warnings.iter().any(|w| w.contains("Port priority must be a multiple of 16")));
+    assert!(
+        invalid_port_plan
+            .warnings
+            .iter()
+            .any(|w| w.contains("Port priority must be a multiple of 16"))
+    );
     let cost = example("switch.stp_cost");
     ready(&set(&cost, "cost", "200000000"));
     for n in ["0", "200000001", "4294967296"] {
@@ -254,14 +273,24 @@ fn stp_guards_reject_missing_or_conflicting_context() {
         "disabled",
     ));
     let bpdu_plan = ready(&example("switch.stp_bpduguard"));
-    assert!(bpdu_plan.verification.iter().any(|v| v == "show interfaces status err-disabled"));
+    assert!(
+        bpdu_plan
+            .verification
+            .iter()
+            .any(|v| v == "show interfaces status err-disabled")
+    );
     reject(&set(
         &example("switch.stp_rootguard"),
         "loop_guard",
         "enabled",
     ));
     let rootg_plan = ready(&example("switch.stp_rootguard"));
-    assert!(rootg_plan.verification.iter().any(|v| v == "show spanning-tree inconsistentports"));
+    assert!(
+        rootg_plan
+            .verification
+            .iter()
+            .any(|v| v == "show spanning-tree inconsistentports")
+    );
 }
 #[test]
 fn port_security_sticky_static_and_aging_order() {
@@ -481,7 +510,9 @@ fn svi_management_and_gateway_validate_subnet_hosts() {
     reject(&set(&req, "forwarding_port", "no"));
     for reserved in ["1002", "1003", "1004", "1005"] {
         let mut bad_svi = set(&req, "vlan", reserved);
-        bad_svi.parameters.insert("interface".into(), format!("Vlan{reserved}"));
+        bad_svi
+            .parameters
+            .insert("interface".into(), format!("Vlan{reserved}"));
         reject(&bad_svi);
     }
     for ip in [
@@ -504,8 +535,12 @@ fn svi_management_and_gateway_validate_subnet_hosts() {
     }
     let gateway = example("switch.default_gateway");
     let gateway_plan = ready(&gateway);
-    assert!(gateway_plan.verification.iter().any(|v| v == "show ip default-gateway"));
-    assert!(!gateway_plan.verification.iter().any(|v| v.contains("redirects")));
+    assert!(
+        gateway_plan
+            .verification
+            .iter()
+            .any(|v| v == "show ip redirects")
+    );
     for ip in [
         "192.168.11.1",
         "192.168.10.2",

@@ -1,5 +1,13 @@
 # Verification and known limits
 
+## Local v0.2 review update
+
+The current local candidate passes **180 application tests**, with zero failures and one private opt-in test ignored, plus the codec's 18 tests. Formatting and strict all-target Clippy pass. This includes 17 independent public-API acceptance cases, 14 router cases, 15 switch cases, address-context regressions and two Library layout tests. See [real-file review](REAL_FILE_REVIEW.md) for the newly authorized 32-file collection and the identified 32/100/7 structural reference. These findings supersede older statements below that the reference had not been found.
+
+The Library collapse was corrected and tested headlessly at 960×600 and 1280×820 in English and Vietnamese. The Windows release executable launched, and the live synthetic Library showed a full-height list and parameter/detail panel. Device-command copying from the synthetic fixture was independently read back from the native Windows clipboard. No new family has Packet Tracer CLI execution certification. No v0.2 changes have been pushed or published.
+
+The sections below retain historical v0.1.x test evidence and limits; their counts describe those earlier builds.
+
 Test date: 2026-10-22. Target: Windows x86_64, Rust 1.99.1, native eframe/egui 0.33.3 OpenGL backend.
 
 ## Automated checks

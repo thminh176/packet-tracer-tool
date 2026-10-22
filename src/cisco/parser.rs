@@ -16,6 +16,9 @@ impl ParsedConfig {
     }
 }
 pub fn interface_name(value: &str) -> Option<String> {
+    if value.chars().any(char::is_control) {
+        return None;
+    }
     let value = value.trim();
     let first = value.find(|c: char| c.is_ascii_digit())?;
     let (prefix, number) = value.split_at(first);
@@ -26,7 +29,7 @@ pub fn interface_name(value: &str) -> Option<String> {
     {
         return None;
     }
-    let name = match prefix.to_ascii_lowercase().as_str() {
+    let name = match prefix.trim_end().to_ascii_lowercase().as_str() {
         "gi" | "gigabitethernet" => "GigabitEthernet",
         "fa" | "fastethernet" => "FastEthernet",
         "se" | "serial" => "Serial",

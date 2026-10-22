@@ -995,7 +995,7 @@ fn ip_specs() -> Vec<CommandSpec> {
                     "disabled",
                 ),
             ],
-            vec!["show ip default-gateway", "show running-config"],
+            vec!["show ip redirects", "show running-config"],
             vec![
                 "For management when IP routing is disabled; gateway must be in the management subnet and differ from address",
             ],

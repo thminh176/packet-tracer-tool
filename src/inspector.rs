@@ -569,6 +569,13 @@ fn sentinel(s: &str) -> bool {
     ) || s.contains("${")
 }
 fn property_tag(property: &str, path: &str) -> Option<&'static str> {
+    if crate::commands::ipv6_address_context(path) {
+        match property.trim().to_ascii_lowercase().as_str() {
+            "ip address" => return Some("IPV6_ADDRESSES"),
+            "prefix length" => return Some("IPV6_PREFIX"),
+            _ => (),
+        }
+    }
     if crate::commands::is_static_route_property(property, path) {
         return Some("STATIC_ROUTE");
     }
@@ -587,7 +594,7 @@ fn property_tag(property: &str, path: &str) -> Option<&'static str> {
         "ipv6 address" | "ipv6 addresses" => Some("IPV6_ADDRESSES"),
         "ipv6 prefix length" => Some("IPV6_PREFIX"),
         "link local" | "link local address" | "ipv6 link local address" => Some("IPV6_LINK_LOCAL"),
-        "ipv6 default gateway" => Some("IPV6_PORT_GATEWAY"),
+        "ipv6 default gateway" | "default gateway ipv6" => Some("IPV6_PORT_GATEWAY"),
         "port status" => Some("POWER"),
         "ipv6 enable" => Some("IPV6_ENABLED"),
         "ipv6 auto config" => Some("IPV6_ADDRESS_AUTOCONFIG"),
@@ -757,6 +764,7 @@ fn attach_command_context(checks: &mut [Checkpoint]) {
     let mut masks = HashMap::<(String, String, String), Vec<String>>::new();
     let mut addresses = HashMap::<(String, String, String), Vec<String>>::new();
     let mut prefixes = HashMap::<(String, String, String), Vec<u8>>::new();
+    let mut ipv6_addresses = HashMap::<(String, String, String), Vec<String>>::new();
     let context = |c: &Checkpoint| {
         (
             c.device.clone(),
@@ -769,6 +777,19 @@ fn attach_command_context(checks: &mut [Checkpoint]) {
         )
     };
     for c in checks.iter() {
+        if property_tag(&c.property, &c.path) == Some("IPV6_ADDRESSES")
+            && !c.device.is_empty()
+            && !c.interface.is_empty()
+            && c.evidence
+                .iter()
+                .all(|e| e == "assessment:compare" || e.starts_with("assessment:device-model="))
+            && ipv6(&c.expected).is_some()
+        {
+            ipv6_addresses
+                .entry(context(c))
+                .or_default()
+                .push(c.expected.clone());
+        }
         if c.path.to_ascii_lowercase().contains("ospf")
             && !c.device.is_empty()
             && !c.evidence.iter().any(|e| {
@@ -843,6 +864,23 @@ fn attach_command_context(checks: &mut [Checkpoint]) {
         }
     }
     for c in checks {
+        if property_tag(&c.property, &c.path) == Some("IPV6_PREFIX")
+            && c.evidence
+                .iter()
+                .all(|e| e == "assessment:compare" || e.starts_with("assessment:device-model="))
+            && let Some(values) = ipv6_addresses.get(&context(c)).filter(|v| v.len() == 1)
+            && let Some(prefixes) = prefixes.get(&context(c)).filter(|v| v.len() == 1)
+            && c.expected.parse::<u8>().ok() == Some(prefixes[0])
+        {
+            if let Some((address, inline_prefix)) = ipv6(&values[0]) {
+                if inline_prefix.is_some_and(|prefix| prefix != prefixes[0]) {
+                    c.evidence
+                        .push("commands:context-conflict=ipv6-prefix".into());
+                } else {
+                    c.evidence.push(format!("commands:ipv6-address={address}"));
+                }
+            }
+        }
         if crate::commands::is_ospf_network_property(&c.property, &c.path) {
             if let Some(values) = ospf_processes.get(&context(c)).filter(|v| v.len() == 1) {
                 c.evidence
@@ -885,6 +923,8 @@ fn attach_command_context(checks: &mut [Checkpoint]) {
                     .get(&context(c))
                     .is_some_and(|values| values.len() != 1 || values[0] != prefix)
             {
+                c.evidence
+                    .push("commands:context-conflict=ipv6-prefix".into());
                 continue;
             }
             let prefix = explicit_prefix.or_else(|| {

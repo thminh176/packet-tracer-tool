@@ -215,3 +215,17 @@ fn ospfv3_and_conflicting_forwarding_targets_do_not_enter_classic_workflows() {
     ];
     assert!(!commands::generate(&c).supported);
 }
+
+#[test]
+fn multiple_ipv6_addresses_coexist_but_conflicting_prefixes_do_not() {
+    let mut a = check("IPv6 Address", "2001:db8:feed::1/64");
+    let mut b = check("IPv6 Address", "2001:db8:cafe::1/64");
+    a.interface = "GigabitEthernet0/0".into();
+    b.interface = a.interface.clone();
+    let script = commands::device_script(&[a.clone(), b], None);
+    assert_eq!(script.matches("ipv6 address ").count(), 2, "{script}");
+    let mut conflicting = check("IPv6 Address", "2001:db8:feed::1/48");
+    conflicting.interface = a.interface.clone();
+    let script = commands::device_script(&[a, conflicting], None);
+    assert!(!script.contains("ipv6 address "), "{script}");
+}

@@ -50,11 +50,8 @@ All 20 bounded Catalyst command specifications across Switching and Multilayer c
 
 ## 4. Findings & Concrete Correctness Fixes
 
-### 4.1. Defect Fix: Non-Existent Verification Command in `switch.default_gateway`
-* **Defect**: The verification command list for `switch.default_gateway` in `src/cisco/switch/mod.rs` included `"show ip redirects"`. In Cisco IOS, `show ip redirects` is not a valid privileged EXEC verification command.
-* **Cisco Official Standard**: On Cisco Catalyst switches in Layer 2 management mode, the standard command to inspect the configured default gateway is `show ip default-gateway` (supported by `show running-config` and `show ip interface brief`).
-* **Fix**: Replaced `"show ip redirects"` with `"show ip default-gateway"` in `src/cisco/switch/mod.rs`.
-* **References**: Cisco Catalyst 2960 Command Reference; `Cisco_IOS_IOS_XE_Huong_Dan_Cau_Hinh_Tieng_Viet.pdf` p. 10; `So_tay_Cisco_A4_Tra_nhanh_lenh_theo_nhom.pdf` p. 3.
+### 4.1. Coordinator correction: preserve documented gateway verification
+The worker initially proposed replacing `show ip redirects`. Integration review rejected that proposal: Cisco's [2960 IOS 15.2(2)E gateway procedure](https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst2960/software/release/15-2_2_e/configuration/guide/b_1522e_2960_2960c_2960s_2960sf_2960p_cg/b_1522e_2960_2960c_2960s_2960sf_2960p_cg_chapter_0101010.html) explicitly uses this command to verify the default gateway. The final candidate retains `show ip redirects` and `show running-config`. Simulator support remains untested.
 
 ### 4.2. Defect Fix: Erroneous Error Diagnostic in `switch.stp_port_priority`
 * **Defect**: When an invalid priority not divisible by 16 was supplied to `switch.stp_port_priority`, the handler returned `"Bridge priority must be a multiple of 16"`. Bridge priority (per-VLAN STP root bridge priority) is stepped in increments of 4096 (0..61440), whereas interface port priority is stepped in increments of 16 (0..240).
@@ -65,7 +62,7 @@ All 20 bounded Catalyst command specifications across Switching and Multilayer c
 * **Defect**: Cisco IOS explicitly rejects assigning access ports or voice ports to legacy reserved VLANs 1002 through 1005 (`% Access VLAN cannot be 1002-1005. Configure a different VLAN.`). Previously, `switch.access_vlan` and `switch.voice_vlan` allowed inputs in 1002..=1005.
 * **Fix**:
   * In `src/cisco/switch/handlers.rs`, added explicit validation rejecting VLANs 1002..=1005 for both `switch.access_vlan` and `switch.voice_vlan`.
-  * For `switch.voice_vlan`, added explicit validation rejecting VLAN 1 (Cisco guideline: voice traffic cannot be directed to default native VLAN 1).
+  * Coordinator review removed the proposed VLAN 1 prohibition: the [Catalyst voice VLAN guide](https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst2960/software/release/15-2_4_e/configurationguide/b_1524e_consolidated_2960p_2960c_cg/m_1522e_vlan_voice_2960s_cg.html) documents IDs 1–4094. Small Business switch restrictions must not be applied to Catalyst models. The regression now preserves VLAN 1 with the existing required context.
 * **References**: Cisco 3560 SCG (VLAN Architecture & Voice VLAN Configuration); `So_tay_lenh_Cisco_Thuc_hanh_Thiet_bi_that.pdf` p. 7.
 
 ### 4.4. Semantic Fix: Rejection of Reserved VLANs (1002–1005) on Management SVI
@@ -88,7 +85,7 @@ All 20 bounded Catalyst command specifications across Switching and Multilayer c
 
 The following two defects were discovered in shared code and formally escalated to the coordinator:
 1. **`src/cisco/parser.rs` (`interface_name`)**: When parsing interface names containing internal whitespace between the interface type and port identifier (e.g., `"FastEthernet 0/1"` or `"vlan 10"`), `split_at(first)` preserves the trailing whitespace in `prefix`, causing match failures against `"fastethernet"` / `"vlan"`. Trimming whitespace from `prefix` would safely permit space-separated interface inputs.
-2. **`src/cisco/mod.rs` (`catalog`)**: Lines 172–189 iterate over all catalog specs and overwrite `semantic_validation` using a hardcoded `matches!` macro that lists only 5 switch commands (`switch.port_mode`, `switch.access_vlan`, `switch.trunk_native`, `switch.trunk_allowed`, `switch.stp_mode`), resetting the remaining 15 switch commands to `false` even though their module specs explicitly define `semantic_validation: true`.
+2. **Semantic validation flags:** Coordinator review confirms the narrowed catalog flags are intentional. Input validation and syntax generation do not establish semantic comparison support. Families without implemented saved-configuration validators remain marked false.
 
 ---
 
@@ -99,7 +96,7 @@ Scoped unit and regression tests were executed with parallel build resource cons
 cargo test --test cisco_switch -j 2
 ```
 Results:
-* `access_and_voice_require_explicit_access_context`: **PASSED** (verifies access context, rejects VLANs 1002–1005 on access/voice, rejects voice VLAN 1).
+* `access_and_voice_require_explicit_access_context`: worker baseline passed. Coordinator updated it to preserve documented Catalyst voice VLAN 1 and retain reserved-VLAN checks; integrated results are recorded separately.
 * `etherchannel_consistency_and_conditional_metadata`: **PASSED** (verifies L2 port consistency, member counts, PAgP/LACP speed/duplex matching).
 * `etherchannel_protocol_matrix_requires_a_forming_peer`: **PASSED** (verifies active/passive, desirable/auto, on/on matrices).
 * `every_required_dependency_is_enforced_and_inputs_are_closed`: **PASSED** (ensures closed parameter validation).
@@ -111,7 +108,7 @@ Results:
 * `router_device_profiles_never_emit_switch_configuration`: **PASSED** (verifies router profiles reject switch commands).
 * `stp_enums_steps_and_boundaries`: **PASSED** (verifies bridge priority step 4096, port priority step 16, diagnostic message verification).
 * `stp_guards_reject_missing_or_conflicting_context`: **PASSED** (verifies portfast/BPDU guard/root guard context and err-disabled/inconsistentports verification commands).
-* `svi_management_and_gateway_validate_subnet_hosts`: **PASSED** (verifies SVI VLAN matching, rejects reserved SVI 1002–1005, verifies `show ip default-gateway` and absence of `redirects`).
+* `svi_management_and_gateway_validate_subnet_hosts`: worker baseline passed. Coordinator corrected its verification assertion to preserve the documented `show ip redirects`; integrated results are recorded separately.
 * `trunk_operations_and_native_peer_consistency`: **PASSED** (verifies trunk allowed operations, native VLAN matching, `show interfaces trunk` verification).
 * `vlan_is_rendered_once_in_vlan_mode`: **PASSED** (verifies VLAN creation and naming).
 
