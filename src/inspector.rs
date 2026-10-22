@@ -552,8 +552,17 @@ fn sentinel(s: &str) -> bool {
             | "::"
     ) || s.contains("${")
 }
-fn property_tag(s: &str) -> Option<&'static str> {
-    match s.trim().to_ascii_lowercase().as_str() {
+fn property_tag(property: &str, path: &str) -> Option<&'static str> {
+    if crate::commands::is_static_route_property(property, path) {
+        return Some("STATIC_ROUTE");
+    }
+    if crate::commands::is_ipv6_static_route_property(property, path) {
+        return Some("IPV6_STATIC_ROUTE");
+    }
+    if crate::commands::is_ospf_network_property(property, path) {
+        return Some("OSPF_NETWORK");
+    }
+    match property.trim().to_ascii_lowercase().as_str() {
         "ip address" | "ipv4 address" => Some("IP"),
         "subnet mask" => Some("SUBNET"),
         "default gateway" => Some("PORT_GATEWAY"),
@@ -636,6 +645,78 @@ fn semantic_equal(tag: &str, expected: &str, actual: &str) -> Option<bool> {
         {
             None
         }
+        "STATIC_ROUTE" => {
+            let exp_route = crate::network_values::ParsedStaticRoute::parse(expected).ok()?;
+            let act_route = crate::network_values::ParsedStaticRoute::parse(actual).ok()?;
+            if exp_route.destination.network != act_route.destination.network
+                || exp_route.destination.prefix != act_route.destination.prefix
+            {
+                return Some(false);
+            }
+            if let Some(ref exp_nh) = exp_route.next_hop {
+                if act_route.next_hop.as_ref() != Some(exp_nh) {
+                    return Some(false);
+                }
+            }
+            if let Some(ref exp_iface) = exp_route.exit_interface {
+                let act_iface = act_route.exit_interface.as_deref().unwrap_or("");
+                if !act_iface.eq_ignore_ascii_case(exp_iface) {
+                    return Some(false);
+                }
+            }
+            if let Some(exp_dist) = exp_route.distance {
+                if exp_dist > 1 && act_route.distance != Some(exp_dist) {
+                    return Some(false);
+                }
+            }
+            Some(true)
+        }
+        "IPV6_STATIC_ROUTE" => {
+            let exp = crate::network_values::ParsedIpv6StaticRoute::parse(expected)?;
+            let act = crate::network_values::ParsedIpv6StaticRoute::parse(actual)?;
+            if exp.destination != act.destination || exp.prefix != act.prefix {
+                return Some(false);
+            }
+            if let Some(ref exp_nh) = exp.next_hop {
+                if act.next_hop.as_ref() != Some(exp_nh) {
+                    return Some(false);
+                }
+            }
+            if let Some(ref exp_iface) = exp.exit_interface {
+                let act_iface = act.exit_interface.as_deref().unwrap_or("");
+                if !act_iface.eq_ignore_ascii_case(exp_iface) {
+                    return Some(false);
+                }
+            }
+            if let Some(exp_dist) = exp.distance {
+                if exp_dist > 1 && act.distance != Some(exp_dist) {
+                    return Some(false);
+                }
+            }
+            Some(true)
+        }
+        "OSPF_NETWORK" => {
+            let exp = crate::network_values::ParsedOspfNetwork::parse(expected).ok()?;
+            let act = crate::network_values::ParsedOspfNetwork::parse(actual).ok()?;
+            if exp.network != act.network || exp.wildcard_mask != act.wildcard_mask {
+                return Some(false);
+            }
+            if let (Some(ea), Some(aa)) = (&exp.area, &act.area) {
+                let norm_ea = if ea == "0.0.0.0" { "0" } else { ea.as_str() };
+                let norm_aa = if aa == "0.0.0.0" { "0" } else { aa.as_str() };
+                if norm_ea != norm_aa {
+                    return Some(false);
+                }
+            } else if exp.area.is_some() != act.area.is_some() {
+                return Some(false);
+            }
+            if let Some(exp_pid) = exp.process_id {
+                if act.process_id.is_some() && act.process_id != Some(exp_pid) {
+                    return Some(false);
+                }
+            }
+            Some(true)
+        }
         "NAME" | "HOSTNAME" => Some(expected.trim() == actual.trim()),
         _ => None,
     }
@@ -656,7 +737,7 @@ fn attach_command_context(checks: &mut [Checkpoint]) {
         )
     };
     for c in checks.iter() {
-        if property_tag(&c.property) == Some("IP")
+        if property_tag(&c.property, &c.path) == Some("IP")
             && !c.device.is_empty()
             && !c.interface.is_empty()
             && c.evidence.iter().all(|e| e == "assessment:compare")
@@ -668,7 +749,7 @@ fn attach_command_context(checks: &mut [Checkpoint]) {
                 .or_default()
                 .push(c.expected.clone());
         }
-        if property_tag(&c.property) == Some("SUBNET")
+        if property_tag(&c.property, &c.path) == Some("SUBNET")
             && !c.device.is_empty()
             && !c.interface.is_empty()
             && c.evidence.iter().all(|e| e == "assessment:compare")
@@ -680,7 +761,7 @@ fn attach_command_context(checks: &mut [Checkpoint]) {
                     .to_string(),
             );
         }
-        if property_tag(&c.property) == Some("IPV6_PREFIX")
+        if property_tag(&c.property, &c.path) == Some("IPV6_PREFIX")
             && !c.device.is_empty()
             && !c.interface.is_empty()
             && c.evidence.iter().all(|e| e == "assessment:compare")
@@ -691,7 +772,7 @@ fn attach_command_context(checks: &mut [Checkpoint]) {
         }
     }
     for c in checks {
-        if property_tag(&c.property) == Some("SUBNET")
+        if property_tag(&c.property, &c.path) == Some("SUBNET")
             && c.evidence.iter().all(|e| e == "assessment:compare")
             && subnet_mask(&c.expected)
             && let Some(values) = addresses.get(&context(c)).filter(|v| v.len() == 1)
@@ -699,7 +780,7 @@ fn attach_command_context(checks: &mut [Checkpoint]) {
             c.evidence
                 .push(format!("commands:ipv4-address={}", values[0]));
         }
-        if property_tag(&c.property) == Some("IP")
+        if property_tag(&c.property, &c.path) == Some("IP")
             && c.evidence.iter().all(|e| e == "assessment:compare")
             && c.expected.parse::<std::net::Ipv4Addr>().is_ok()
             && !sentinel(&c.expected)
@@ -707,7 +788,7 @@ fn attach_command_context(checks: &mut [Checkpoint]) {
         {
             c.evidence.push(format!("commands:ipv4-mask={}", values[0]));
         }
-        if property_tag(&c.property) == Some("IPV6_ADDRESSES")
+        if property_tag(&c.property, &c.path) == Some("IPV6_ADDRESSES")
             && !c.device.is_empty()
             && !c.interface.is_empty()
             && c.evidence.iter().all(|e| e == "assessment:compare")
@@ -763,6 +844,47 @@ fn ios_observations(device: &Node, interface: &str, tag: &str) -> Vec<String> {
             .filter(|name| !name.is_empty() && !name.contains(char::is_whitespace))
             .map(str::to_owned)
             .collect();
+    }
+    if tag == "STATIC_ROUTE" && interface.is_empty() {
+        return lines
+            .iter()
+            .filter_map(|line| line.trim().strip_prefix("ip route ").map(str::trim))
+            .filter(|r| !r.is_empty())
+            .map(str::to_owned)
+            .collect();
+    }
+    if tag == "IPV6_STATIC_ROUTE" && interface.is_empty() {
+        return lines
+            .iter()
+            .filter_map(|line| line.trim().strip_prefix("ipv6 route ").map(str::trim))
+            .filter(|r| !r.is_empty())
+            .map(str::to_owned)
+            .collect();
+    }
+    if tag == "OSPF_NETWORK" && interface.is_empty() {
+        let mut active_pid: Option<u32> = None;
+        let mut statements = Vec::new();
+        for line in &lines {
+            let trimmed = line.trim();
+            if let Some(rest) = trimmed.strip_prefix("router ospf ") {
+                active_pid = rest.trim().parse::<u32>().ok().filter(|&p| p > 0 && p < 65535);
+                continue;
+            }
+            if matches!(trimmed, "!" | "exit" | "end")
+                || (!line.starts_with(char::is_whitespace) && !trimmed.is_empty())
+            {
+                active_pid = None;
+            }
+            if let Some(pid) = active_pid {
+                if let Some(rest) = trimmed.strip_prefix("network ") {
+                    let words: Vec<&str> = rest.split_whitespace().collect();
+                    if words.len() == 4 && words[2] == "area" {
+                        statements.push(format!("{pid} {} {} {}", words[0], words[1], words[3]));
+                    }
+                }
+            }
+        }
+        return statements;
     }
     if interface.is_empty() {
         return Vec::new();
@@ -838,7 +960,7 @@ fn observations(node: &Node, device: &str, interface: &str, tag: &str) -> Vec<St
         return Vec::new();
     }
     let engine = matching[0].unique_child("ENGINE").unwrap_or(matching[0]);
-    if tag == "HOSTNAME" {
+    if matches!(tag, "HOSTNAME" | "STATIC_ROUTE" | "IPV6_STATIC_ROUTE" | "OSPF_NETWORK") {
         return ios_observations(matching[0], interface, tag);
     }
     if interface.is_empty() {
@@ -960,35 +1082,106 @@ pub fn compare(activity: &mut Analysis, progress: &Analysis) {
         {
             continue;
         }
-        let Some(tag) = property_tag(&check.property) else {
+        let Some(tag) = property_tag(&check.property, &check.path) else {
+            check.explanation = "Unsupported assessment check type; not evaluated".into();
             continue;
         };
-        if matches!(tag, "NAME" | "HOSTNAME") && !check.interface.is_empty() {
-            continue;
-        }
-        let values = observations(current[0].0, &check.device, &check.interface, tag);
-        if values.is_empty()
-            || (values.len() > 1 && tag != "IPV6_ADDRESSES")
-            || values.iter().any(|v| sentinel(v))
+        if matches!(
+            tag,
+            "NAME" | "HOSTNAME" | "STATIC_ROUTE" | "IPV6_STATIC_ROUTE" | "OSPF_NETWORK"
+        ) && !check.interface.is_empty()
         {
             continue;
         }
+        let values = observations(current[0].0, &check.device, &check.interface, tag);
+        if values.is_empty() {
+            if matches!(tag, "STATIC_ROUTE" | "IPV6_STATIC_ROUTE" | "OSPF_NETWORK") {
+                let mut configs = Vec::new();
+                descendants(current[0].0, "RUNNINGCONFIG", &mut configs);
+                if configs.len() == 1 {
+                    check.current = Some("none".into());
+                    check.status = Status::Failed;
+                    check.explanation = match tag {
+                        "STATIC_ROUTE" => "No IPv4 static routes configured on device".into(),
+                        "IPV6_STATIC_ROUTE" => "No IPv6 static routes configured on device".into(),
+                        "OSPF_NETWORK" => "No OSPF network statements configured on device".into(),
+                        _ => "No configuration found on device".into(),
+                    };
+                    check.evidence.push(format!(
+                        "expected assessment / {}: {}",
+                        check.path, check.expected
+                    ));
+                    check.evidence.push(format!(
+                        "current network / {} / {tag}: none",
+                        check.device
+                    ));
+                }
+            }
+            continue;
+        }
+        if values.len() > 1
+            && !matches!(
+                tag,
+                "IPV6_ADDRESSES" | "STATIC_ROUTE" | "IPV6_STATIC_ROUTE" | "OSPF_NETWORK"
+            )
+        {
+            continue;
+        }
+        if values.iter().any(|v| sentinel(v)) {
+            continue;
+        }
+        let is_multi = matches!(
+            tag,
+            "IPV6_ADDRESSES" | "STATIC_ROUTE" | "IPV6_STATIC_ROUTE" | "OSPF_NETWORK"
+        );
         let comparisons: Option<Vec<bool>> = values
             .iter()
             .map(|actual| semantic_equal(tag, check.expected.trim(), actual))
             .collect();
         let Some(comparisons) = comparisons else {
+            if tag == "STATIC_ROUTE" {
+                if let Ok(r) = crate::network_values::ParsedStaticRoute::parse(&check.expected) {
+                    if !r.is_complete {
+                        check.explanation = format!(
+                            "Assessment checkpoint missing required route parameters: {}",
+                            r.missing_fields.join(", ")
+                        );
+                    }
+                }
+            } else if tag == "OSPF_NETWORK"
+                && let Ok(o) = crate::network_values::ParsedOspfNetwork::parse(&check.expected)
+                && !o.is_complete
+            {
+                check.explanation = format!(
+                    "Assessment checkpoint missing required OSPF parameters: {}",
+                    o.missing_fields.join(", ")
+                );
+            }
             continue;
         };
-        let actual = values.join(", ");
+        let actual = if is_multi {
+            values.join("\n")
+        } else {
+            values.join(", ")
+        };
         check.current = Some(actual.clone());
         check.status = if comparisons.into_iter().any(|equal| equal) {
             Status::Passed
         } else {
             Status::Failed
         };
-        check.explanation =
-            "Compared supported explicit values in a uniquely identified device/interface".into();
+        check.explanation = match tag {
+            "STATIC_ROUTE" => "Compared IPv4 static route against device running-config".into(),
+            "IPV6_STATIC_ROUTE" => {
+                "Compared IPv6 static route against device running-config".into()
+            }
+            "OSPF_NETWORK" => {
+                "Compared OSPF network statements against device running-config".into()
+            }
+            _ => {
+                "Compared supported explicit values in a uniquely identified device/interface".into()
+            }
+        };
         check.evidence.push(format!(
             "expected assessment / {}: {}",
             check.path, check.expected

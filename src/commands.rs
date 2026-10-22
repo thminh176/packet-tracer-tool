@@ -122,6 +122,34 @@ fn unsupported(reason: &str) -> Command {
     }
 }
 
+pub fn is_static_route_property(property: &str, path: &str) -> bool {
+    let p = key(property);
+    let path_k = key(path);
+    (p.contains("staticroute")
+        || p.starts_with("route")
+        || p.ends_with("staticroutesv2")
+        || path_k.contains("staticroutes")
+        || path_k.contains("staticroute"))
+        && !path_k.contains("routesv6")
+        && !p.contains("ipv6")
+}
+
+pub fn is_ipv6_static_route_property(property: &str, path: &str) -> bool {
+    let p = key(property);
+    let path_k = key(path);
+    p.contains("ipv6staticroute")
+        || path_k.contains("routesv6")
+        || (p.contains("route") && (p.contains("v6") || path_k.contains("v6")))
+}
+
+pub fn is_ospf_network_property(property: &str, path: &str) -> bool {
+    let p = key(property);
+    let path_k = key(path);
+    p.contains("ospfnetwork")
+        || (path_k.contains("ospf")
+            && (p.contains("network") || p.contains("route") || p.contains("address")))
+}
+
 // The inspector may attach a uniquely matched explicit sibling requirement.
 // Evidence is never interpreted as raw CLI or mined for arbitrary numbers.
 fn explicit_value(c: &Checkpoint) -> Result<String, &'static str> {
@@ -137,6 +165,73 @@ fn explicit_value(c: &Checkpoint) -> Result<String, &'static str> {
         return Err("Unsupported assessment check type; no reliable configuration requirement.");
     }
     let property = key(&c.property);
+    if is_static_route_property(&c.property, &c.path) {
+        if let Ok(mut r) = crate::network_values::ParsedStaticRoute::parse(&c.expected) {
+            if !r.is_complete {
+                for ev in &c.evidence {
+                    if let Some(target) = ev.strip_prefix("commands:route-next-hop=") {
+                        if let Ok(nh) = target.parse::<Ipv4Addr>() {
+                            r.next_hop = Some(nh);
+                            r.is_complete = true;
+                        } else if iface(target) {
+                            r.exit_interface = Some(target.to_string());
+                            r.is_complete = true;
+                        }
+                    }
+                }
+            }
+            if r.is_complete {
+                if let Some(cmd) = r.to_cisco_command() {
+                    return Ok(cmd.strip_prefix("ip route ").unwrap_or(&cmd).to_string());
+                }
+            }
+        }
+        return Ok(c.expected.clone());
+    }
+    if is_ospf_network_property(&c.property, &c.path) {
+        if let Ok(mut o) = crate::network_values::ParsedOspfNetwork::parse(&c.expected) {
+            for ev in &c.evidence {
+                if let Some(pid_str) = ev.strip_prefix("commands:ospf-process=") {
+                    if let Ok(pid) = pid_str.parse::<u32>() {
+                        o = o.with_process_id(pid);
+                    }
+                }
+                if let Some(area_str) = ev.strip_prefix("commands:ospf-area=") {
+                    o = o.with_area(area_str);
+                }
+            }
+            if o.process_id.is_none() && o.area.is_some() {
+                o = o.with_process_id(1);
+            }
+            if o.is_complete {
+                let pid = o.process_id.unwrap_or(1);
+                return Ok(format!(
+                    "{pid} {} {} {}",
+                    o.network,
+                    o.wildcard_mask,
+                    o.area.as_deref().unwrap_or("0")
+                ));
+            }
+        }
+        return Ok(c.expected.clone());
+    }
+    if matches!(property.as_str(), "ipaddress" | "ipv4address") {
+        if let Some((addr, p_str)) = c
+            .expected
+            .split_once('-')
+            .or_else(|| c.expected.split_once('/'))
+        {
+            if let (Ok(ip_addr), Ok(prefix)) =
+                (addr.trim().parse::<Ipv4Addr>(), p_str.trim().parse::<u8>())
+            {
+                if prefix <= 32 {
+                    if let Some(mask) = crate::network_values::prefix_to_subnet(prefix) {
+                        return Ok(format!("{ip_addr} {mask}"));
+                    }
+                }
+            }
+        }
+    }
     let marker = match property.as_str() {
         "ipaddress" | "ipv4address" => "commands:ipv4-mask=",
         "subnetmask" => "commands:ipv4-address=",
@@ -289,21 +384,19 @@ fn plan(c: &Checkpoint) -> Result<Plan, &'static str> {
         "defaultgateway" | "gateway" if t.len() == 1 && ip(value) => {
             format!("ip default-gateway {value}")
         }
-        "staticroute" | "ipv4staticroute"
-            if (t.len() == 3 || t.len() == 4)
-                && network(t[0], t[1])
-                && (ip(t[2]) || iface(t[2]))
-                && (t.len() == 3 || number(t[3], 1, 254)) =>
+        p if (p == "staticroute" || p == "ipv4staticroute" || is_static_route_property(&c.property, &c.path))
+            && (t.len() == 3 || t.len() == 4)
+            && network(t[0], t[1])
+            && (ip(t[2]) || iface(t[2]))
+            && (t.len() == 3 || number(t[3], 1, 254)) =>
         {
             format!("ip route {}", t.join(" "))
         }
-        "ipv6staticroute"
-            if (t.len() == 2 || t.len() == 3)
-                && prefix6(t[0])
-                && t[1]
-                    .parse::<Ipv6Addr>()
-                    .is_ok_and(|a| a.segments()[0] & 0xffc0 != 0xfe80)
-                && (t.len() == 2 || number(t[2], 1, 254)) =>
+        p if (p == "ipv6staticroute" || is_ipv6_static_route_property(&c.property, &c.path))
+            && (t.len() == 2 || t.len() == 3)
+            && prefix6(t[0])
+            && (t[1].parse::<Ipv6Addr>().is_ok_and(|a| a.segments()[0] & 0xffc0 != 0xfe80) || iface(t[1]))
+            && (t.len() == 2 || number(t[2], 1, 254)) =>
         {
             format!("ipv6 route {}", t.join(" "))
         }
@@ -395,12 +488,12 @@ fn plan(c: &Checkpoint) -> Result<Plan, &'static str> {
         "dhcpexcludedaddress" if (t.len() == 1 || t.len() == 2) && t.iter().all(|v| ip(v)) => {
             format!("ip dhcp excluded-address {}", t.join(" "))
         }
-        "ospfnetwork"
-            if t.len() == 4
-                && number(t[0], 1, 65534)
-                && ip(t[1])
-                && wildcard(t[2])
-                && (number(t[3], 0, 4294967294) || ip(t[3])) =>
+        p if (p == "ospfnetwork" || is_ospf_network_property(&c.property, &c.path))
+            && t.len() == 4
+            && number(t[0], 1, 65534)
+            && ip(t[1])
+            && wildcard(t[2])
+            && (number(t[3], 0, 4294967294) || ip(t[3])) =>
         {
             out.context.push(format!("router ospf {}", t[0]));
             format!("network {} {} area {}", t[1], t[2], t[3])
@@ -596,6 +689,31 @@ fn interface_order(p: &Plan) -> u8 {
 fn conflict_key(c: &Checkpoint, p: &Plan) -> Option<String> {
     let mut property = key(&c.property);
     let t: Vec<_> = c.expected.split_whitespace().collect();
+    if is_static_route_property(&c.property, &c.path) {
+        if let Some(line) = p.lines.first() {
+            let words: Vec<_> = line.split_whitespace().collect();
+            if words.len() >= 4 && words[0] == "ip" && words[1] == "route" {
+                return Some(format!("{}:route:{} {}", p.context.join("/"), words[2], words[3]));
+            }
+        }
+    }
+    if is_ipv6_static_route_property(&c.property, &c.path) {
+        if let Some(line) = p.lines.first() {
+            let words: Vec<_> = line.split_whitespace().collect();
+            if words.len() >= 3 && words[0] == "ipv6" && words[1] == "route" {
+                return Some(format!("{}:route6:{}", p.context.join("/"), words[2]));
+            }
+        }
+    }
+    if is_ospf_network_property(&c.property, &c.path) {
+        if let Some(line) = p.lines.first() {
+            let words: Vec<_> = line.split_whitespace().collect();
+            if words.len() >= 5 && words[0] == "network" {
+                let pid = p.context.iter().find_map(|c| c.strip_prefix("router ospf ")).unwrap_or("1");
+                return Some(format!("{}:ospf:{pid}:{} {}", p.context.join("/"), words[1], words[2]));
+            }
+        }
+    }
     match property.as_str() {
         "eigrpnetwork" | "dhcpexcludedaddress" | "save" | "saveconfiguration" => return None,
         "staticroute" | "ipv4staticroute" => {
