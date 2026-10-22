@@ -393,6 +393,15 @@ pub fn parse(xml: &str) -> Result<Analysis> {
         inventory += result.checkpoints.len();
         result.checkpoints.clear();
     }
+    ensure!(
+        result
+            .checkpoints
+            .iter()
+            .map(|c| c.weight)
+            .sum::<f64>()
+            .is_finite(),
+        "Aggregate assessment weight exceeds finite score range"
+    );
     if inventory > 0 {
         result.diagnostics.push(format!("Excluded {inventory} unchecked/partial/disabled terminal inventory nodes from assessment counts and scores; original XML retained"));
     }

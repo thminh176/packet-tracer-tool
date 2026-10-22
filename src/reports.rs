@@ -49,6 +49,15 @@ fn md(v: &str) -> String {
     v.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+        .replace('\\', "\\\\")
+        .replace('[', "&#91;")
+        .replace(']', "&#93;")
+        .replace('(', "&#40;")
+        .replace(')', "&#41;")
+        .replace('*', "&#42;")
+        .replace('_', "&#95;")
+        .replace('`', "&#96;")
+        .replace('!', "&#33;")
         .replace('|', "\\|")
         .replace(['\r', '\n'], " ")
 }
@@ -102,6 +111,8 @@ mod tests {
         assert!(c.contains("'=1+1"));
         assert!(c.contains("\"a,b\"\"c\""));
         assert!(markdown(&a).contains("&lt;x&gt;\\|y"));
+        assert!(!md("![x](https://example.invalid/a) [link](url)").contains("](https"));
+        assert!(md("[link](url)").contains("&#91;link&#93;"));
     }
     #[test]
     fn score_keeps_unknown_separate() {

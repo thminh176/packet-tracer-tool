@@ -672,3 +672,15 @@ fn many_repeated_deep_paths_are_bounded_before_materialization() {
             .contains("budget exceeded")
     );
 }
+
+#[test]
+fn aggregate_score_overflow_is_rejected() {
+    let text = include_str!("fixtures/synthetic-126.xml")
+        .replace("<POINTS>1</POINTS>", "<POINTS>1e308</POINTS>");
+    assert!(
+        parse(&text)
+            .unwrap_err()
+            .to_string()
+            .contains("Aggregate assessment weight")
+    );
+}

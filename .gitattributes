@@ -1,0 +1,8 @@
+# Preserve reviewed upstream notice bytes and Unix workflow newlines.
+* text=auto
+*.rs text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+third-party/licenses/** -text
+*.png binary

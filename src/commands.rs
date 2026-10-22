@@ -693,10 +693,10 @@ pub fn device_script(checkpoints: &[Checkpoint], device: Option<&str>) -> String
             }
             let command = generate(c);
             if command.supported && !command.gui {
-                if let Ok(p) = plan(c) {
-                    if !plans.contains(&p) {
-                        plans.push(p);
-                    }
+                if let Ok(p) = plan(c)
+                    && !plans.contains(&p)
+                {
+                    plans.push(p);
                 }
             } else {
                 omitted += 1;
