@@ -32,6 +32,7 @@ fn physical(s: &str) -> bool {
     .find_map(|prefix| lower.strip_prefix(prefix)) else {
         return false;
     };
+    let tail = tail.trim_start();
     let parts: Vec<_> = tail.split('/').collect();
     (2..=3).contains(&parts.len())
         && parts
@@ -173,6 +174,13 @@ pub fn generate(req: &CommandRequest) -> Result<Vec<ModeCommand>, String> {
         }
         "switch.access_vlan" | "switch.voice_vlan" => {
             eq(req, "interface_mode", "access")?;
+            let vlan = int(req, "vlan")?;
+            if (1002..=1005).contains(&vlan) {
+                return Err("Access and voice VLANs cannot use reserved VLANs 1002-1005".into());
+            }
+            if req.family == "switch.voice_vlan" && vlan == 1 {
+                return Err("Voice VLAN cannot be VLAN 1".into());
+            }
             Ok(iface(format!(
                 "switchport {} vlan {}",
                 if req.family == "switch.access_vlan" {
@@ -180,7 +188,7 @@ pub fn generate(req: &CommandRequest) -> Result<Vec<ModeCommand>, String> {
                 } else {
                     "voice"
                 },
-                req.get("vlan")
+                vlan
             )))
         }
         "switch.trunk_native" => {
@@ -257,11 +265,15 @@ pub fn generate(req: &CommandRequest) -> Result<Vec<ModeCommand>, String> {
             ) {
                 return Err("SVI setup requires identified Catalyst2960 or Catalyst3560".into());
             }
-            if svi(req.get("interface")) != Some(int(req, "vlan")? as u16) {
+            let vlan = int(req, "vlan")?;
+            if (1002..=1005).contains(&vlan) {
+                return Err("SVI cannot be configured on reserved VLANs 1002-1005".into());
+            }
+            if svi(req.get("interface")) != Some(vlan as u16) {
                 return Err("SVI interface and VLAN number must match".into());
             }
             ipv4_host(req, "address")?;
-            let mode = ConfigMode::Interface(format!("Vlan{}", req.get("vlan")));
+            let mode = ConfigMode::Interface(format!("Vlan{}", vlan));
             Ok(vec![
                 at(
                     mode.clone(),
@@ -307,7 +319,8 @@ fn svi(s: &str) -> Option<u16> {
     let lower = s.to_ascii_lowercase();
     let tail = lower
         .strip_prefix("vlan")
-        .or_else(|| lower.strip_prefix("vl"))?;
+        .or_else(|| lower.strip_prefix("vl"))?
+        .trim_start();
     if tail.is_empty() || !tail.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }

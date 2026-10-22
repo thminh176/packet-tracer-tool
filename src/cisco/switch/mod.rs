@@ -115,6 +115,11 @@ pub fn specs() -> Vec<CommandSpec> {
         "show interfaces <interface> switchport",
         "show running-config interface <interface>",
     ];
+    let trunk_ports = vec![
+        "show interfaces trunk",
+        "show interfaces <interface> switchport",
+        "show running-config interface <interface>",
+    ];
     let stp = vec!["show spanning-tree", "show running-config"];
     let mut result = vec![
         spec(
@@ -290,14 +295,14 @@ pub fn specs() -> Vec<CommandSpec> {
                     "10",
                 ),
             ],
-            ports.clone(),
+            trunk_ports.clone(),
             vec!["Confirmed trunk; native VLANs at both ends must match"],
         ),
         spec(
             "switch.trunk_allowed",
             "Change trunk VLAN membership",
             "Đổi danh sách VLAN được phép trên trunk",
-            "switchport trunk allowed vlan [add|remove|except] <vlans>",
+            "switchport trunk allowed vlan [add|remove|except] <vlans> | all | none",
             "interface",
             TRUNK,
             vec![
@@ -319,7 +324,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     "10,20-22",
                 ),
             ],
-            ports,
+            trunk_ports,
             vec!["Confirmed trunk; empty, descending and overlapping ranges are rejected"],
         ),
         spec(
@@ -433,7 +438,11 @@ pub fn specs() -> Vec<CommandSpec> {
                     "enabled",
                 ),
             ],
-            stp.clone(),
+            vec![
+                "show spanning-tree",
+                "show interfaces status err-disabled",
+                "show running-config",
+            ],
             vec!["Bounded subset requires a PortFast access port"],
         ),
         spec(
@@ -454,7 +463,11 @@ pub fn specs() -> Vec<CommandSpec> {
                     "disabled",
                 ),
             ],
-            stp.clone(),
+            vec![
+                "show spanning-tree",
+                "show spanning-tree inconsistentports",
+                "show running-config",
+            ],
             vec!["Root guard and loop guard are mutually exclusive"],
         ),
         spec(
@@ -982,7 +995,7 @@ fn ip_specs() -> Vec<CommandSpec> {
                     "disabled",
                 ),
             ],
-            vec!["show ip redirects", "show running-config"],
+            vec!["show ip default-gateway", "show running-config"],
             vec![
                 "For management when IP routing is disabled; gateway must be in the management subnet and differ from address",
             ],
