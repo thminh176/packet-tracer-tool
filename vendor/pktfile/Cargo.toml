@@ -54,7 +54,7 @@ version = "0.9"
 version = "1"
 
 [dependencies.quick-xml]
-version = "0.38"
+version = "0.41"
 
 [dependencies.thiserror]
 version = "2"
@@ -78,4 +78,6 @@ priority = -1
 [lints.rust]
 missing_debug_implementations = "warn"
 unsafe_code = "forbid"
+
+
 

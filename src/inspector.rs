@@ -4,6 +4,7 @@ use anyhow::{Context, Result, bail, ensure};
 use quick_xml::{Reader, events::Event};
 use std::{
     collections::{BTreeMap, HashMap},
+    io::Read,
     path::Path,
     time::Instant,
 };
@@ -52,7 +53,11 @@ pub fn load(path: &Path) -> Result<Analysis> {
         std::fs::metadata(path)?.len() <= MAX_BYTES as u64,
         "Input exceeds 64 MiB limit"
     );
-    let bytes = std::fs::read(path).with_context(|| format!("Read {}", path.display()))?;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .with_context(|| format!("Read {}", path.display()))?
+        .take(MAX_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)?;
     let read_ms = started.elapsed().as_secs_f64() * 1000.0;
     let decode_started = Instant::now();
     ensure!(bytes.len() <= MAX_BYTES, "Input exceeds 64 MiB limit");
@@ -105,8 +110,11 @@ fn document(xml: &str) -> Result<Node> {
                     let attr = attr.context("Malformed or duplicate XML attribute")?;
                     node.attrs.insert(
                         std::str::from_utf8(attr.key.as_ref())?.to_owned(),
-                        attr.decode_and_unescape_value(reader.decoder())?
-                            .into_owned(),
+                        attr.decoded_and_normalized_value(
+                            quick_xml::XmlVersion::Implicit1_0,
+                            reader.decoder(),
+                        )?
+                        .into_owned(),
                     );
                 }
                 if empty {
@@ -120,12 +128,20 @@ fn document(xml: &str) -> Result<Node> {
                 let node = stack.pop().unwrap();
                 stack.last_mut().unwrap().children.push(node);
             }
-            Event::Text(e) => stack
+            Event::Text(e) => {
+                stack
+                    .last_mut()
+                    .unwrap()
+                    .text
+                    .push_str(&quick_xml::escape::unescape(
+                        &e.xml_content(quick_xml::XmlVersion::Implicit1_0)?,
+                    )?)
+            }
+            Event::CData(e) => stack
                 .last_mut()
                 .unwrap()
                 .text
-                .push_str(&quick_xml::escape::unescape(&e.xml_content()?)?),
-            Event::CData(e) => stack.last_mut().unwrap().text.push_str(&e.xml_content()?),
+                .push_str(&e.xml_content(quick_xml::XmlVersion::Implicit1_0)?),
             Event::GeneralRef(e) => {
                 let name = e.decode()?;
                 let escaped = format!("&{name};");
@@ -154,6 +170,9 @@ fn descendants<'a>(node: &'a Node, tag: &str, out: &mut Vec<&'a Node>) {
     for child in &node.children {
         descendants(child, tag, out);
     }
+}
+fn node_count(node: &Node) -> usize {
+    1 + node.children.iter().map(node_count).sum::<usize>()
 }
 fn role(node: &Node, inherited: &str) -> String {
     let mut roles = Vec::new();
@@ -201,6 +220,46 @@ fn label(node: &Node) -> &str {
     } else {
         node.value("NAME")
     }
+}
+
+/// Bound derived strings before assessment materialization. Small XML can
+/// otherwise multiply a long ancestor label into thousands of full paths.
+fn assessment_budget(
+    node: &Node,
+    path_bytes: usize,
+    total: &mut usize,
+    leaves: &mut usize,
+) -> Result<()> {
+    let mut path_bytes = path_bytes;
+    if node.tag == "NODE" {
+        ensure!(
+            label(node).len() <= 512 && node.value("NAME").len() <= 512,
+            "Assessment label exceeds 512 byte limit"
+        );
+        path_bytes = path_bytes.saturating_add(label(node).len() + 3);
+        ensure!(
+            path_bytes <= 4096,
+            "Assessment path exceeds 4096 byte limit"
+        );
+        if !node.children.iter().any(|c| c.tag == "NODE") {
+            *total = total.saturating_add(path_bytes.saturating_mul(3));
+            *leaves += 1;
+            ensure!(
+                *total <= 8 * 1024 * 1024 && *leaves <= 50_000,
+                "Assessment derived output budget exceeded"
+            );
+        }
+        if let Some(name) = node.child("NAME") {
+            ensure!(
+                name.attr("nodeValue").len() <= 4096,
+                "Assessment value exceeds 4096 byte limit"
+            );
+        }
+    }
+    for child in &node.children {
+        assessment_budget(child, path_bytes, total, leaves)?;
+    }
+    Ok(())
 }
 fn assessment(
     node: &Node,
@@ -315,6 +374,11 @@ pub fn parse(xml: &str) -> Result<Analysis> {
     if inventory_only {
         descendants(&root, "INITIALSETUP", &mut trees);
     }
+    let mut output_budget = 0;
+    let mut assessment_leaves = 0;
+    for tree in &trees {
+        assessment_budget(tree, 0, &mut output_budget, &mut assessment_leaves)?;
+    }
     let mut inventory = 0;
     for tree in trees {
         assessment(
@@ -346,6 +410,18 @@ pub fn parse(xml: &str) -> Result<Analysis> {
     for (snapshot, _) in &snaps {
         descendants(snapshot, "DEVICE", &mut devices);
     }
+    ensure!(
+        result.checkpoints.len().saturating_mul(devices.len()) <= 5_000_000,
+        "Device/checkpoint matching complexity budget exceeded"
+    );
+    ensure!(
+        result
+            .checkpoints
+            .len()
+            .saturating_mul(snaps.iter().map(|(n, _)| node_count(n)).sum::<usize>())
+            <= 50_000_000,
+        "Snapshot matching operation budget exceeded"
+    );
     for checkpoint in &mut result.checkpoints {
         let mut names: Vec<_> = devices
             .iter()
@@ -841,6 +917,12 @@ pub fn compare(activity: &mut Analysis, progress: &Analysis) {
             return;
         }
     };
+    if activity.checkpoints.len().saturating_mul(node_count(&root)) > 50_000_000 {
+        activity
+            .diagnostics
+            .push("Validation operation budget exceeded; results remain Unverified".into());
+        return;
+    }
     if !matches!(
         root.tag.as_str(),
         "PACKETTRACER5" | "PACKETTRACER5_ACTIVITY" | "PACKETTRACER_ACTIVITY"

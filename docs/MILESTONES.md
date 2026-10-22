@@ -1,6 +1,5 @@
 # Milestones and ownership
 
-Orca run: run_743a8b6e0f0f.
 
 1. Shared model and module contract (coordinator) ? decoder/extraction (Codex, inspector-core) + GUI (Antigravity, inspector-ui) + commands (Codex, inspector-commands).
 2. Structured assessment and scores depend on decoder/extraction; summary model belongs to coordinator.

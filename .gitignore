@@ -6,3 +6,12 @@
 
 **/target/
 /vendor/pktfile/Cargo.lock
+
+.env
+.env.*
+*.pem
+*.key
+*.pkz
+*.pksz
+*.log
+/audit-output/

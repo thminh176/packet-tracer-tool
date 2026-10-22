@@ -203,6 +203,11 @@
                      "explanation.unsupported_endpoint":  "Endpoint configuration is GUI-only; this property needs explicit supported IP configuration data.",
                      "explanation.semantic_complete":  "Compared supported explicit values in a uniquely identified device/interface",
                      "explanation.selection_inferred":  "Selection uses observed NAME checkType=2 (Qt checked state); Packet Tracer schema mapping is inferred, not a certified grading contract",
-                     "explanation.no_assessment":  "No selected assessment leaves found; network state alone is not an assessment and custom/script scoring is not evaluated"
+                     "explanation.no_assessment":  "No selected assessment leaves found; network state alone is not an assessment and custom/script scoring is not evaluated",
+                     "disclaimer.cisco":  "Independent project; not affiliated with or endorsed by Cisco. Cisco and Packet Tracer are trademarks of their respective owner.",
+                     "ui.paste_target_notice":  "Paste into the target device CLI in Packet Tracer. Never run in PowerShell or a system terminal.",
+                     "ui.unsupported_checkpoints_title":  "Unsupported / GUI checkpoints ({count})",
+                     "ui.unsupported_checkpoints_desc":  "These requirements need GUI configuration or separate review; no IOS commands are generated for them.",
+                     "menu.settings":  "Settings"
                  }
 }

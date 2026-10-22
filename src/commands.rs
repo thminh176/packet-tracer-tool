@@ -6,7 +6,7 @@ use std::{
     net::{Ipv4Addr, Ipv6Addr},
 };
 
-#[derive(Default)]
+#[derive(Default, PartialEq, Eq)]
 struct Plan {
     context: Vec<String>,
     lines: Vec<String>,
@@ -543,18 +543,25 @@ fn render(plans: &[Plan]) -> String {
     let mut text = String::from("enable\n");
     if plans.iter().any(|p| !p.save) {
         text.push_str("configure terminal\n");
+        let mut active_context: Vec<String> = Vec::new();
         for p in plans.iter().filter(|p| !p.save) {
-            for context in &p.context {
-                text.push_str(context);
-                text.push('\n');
+            if active_context != p.context {
+                for _ in &active_context {
+                    text.push_str("exit\n");
+                }
+                active_context = p.context.clone();
+                for context in &p.context {
+                    text.push_str(context);
+                    text.push('\n');
+                }
             }
             for line in &p.lines {
                 text.push_str(line);
                 text.push('\n');
             }
-            for _ in &p.context {
-                text.push_str("exit\n");
-            }
+        }
+        for _ in &active_context {
+            text.push_str("exit\n");
         }
         text.push_str("end\n");
     }
@@ -647,7 +654,7 @@ fn conflict_plan(c: &Checkpoint) -> Option<Plan> {
 
 /// Group independently scoped CLI blocks per device, with VLAN definitions
 /// before interface configuration and explicit saves at the end. GUI/unsupported
-/// checkpoints appear as comments, never as executable configuration.
+/// checkpoints are summarized once; their detailed explanations belong in the UI.
 pub fn device_script(checkpoints: &[Checkpoint], device: Option<&str>) -> String {
     let mut groups: BTreeMap<&str, Vec<&Checkpoint>> = BTreeMap::new();
     for c in checkpoints {
@@ -674,30 +681,25 @@ pub fn device_script(checkpoints: &[Checkpoint], device: Option<&str>) -> String
             }
         }
         let mut plans = Vec::new();
+        let mut omitted = 0;
+        let mut conflicts = 0;
         for c in items {
             if conflict_plan(c)
                 .and_then(|p| conflict_key(c, &p))
                 .is_some_and(|k| values.get(&k).is_some_and(|v| v.len() > 1))
             {
-                output.push_str(
-                    "! Skipped conflicting explicit requirements in the same device/context.\n",
-                );
+                conflicts += 1;
                 continue;
             }
             let command = generate(c);
             if command.supported && !command.gui {
                 if let Ok(p) = plan(c) {
-                    plans.push(p);
+                    if !plans.contains(&p) {
+                        plans.push(p);
+                    }
                 }
             } else {
-                output.push_str(&format!(
-                    "! {}\n",
-                    if command.gui {
-                        command.text
-                    } else {
-                        command.explanation
-                    }
-                ));
+                omitted += 1;
             }
         }
         // Preserve ACL entry order; establish interface mode before port security,
@@ -715,6 +717,14 @@ pub fn device_script(checkpoints: &[Checkpoint], device: Option<&str>) -> String
                 interface_order(p),
             )
         });
+        if omitted > 0 {
+            output.push_str(&format!("! Omitted {omitted} unsupported or GUI-only checkpoints; review checkpoint details.\n"));
+        }
+        if conflicts > 0 {
+            output.push_str(&format!(
+                "! Skipped conflicting explicit requirements in {conflicts} checkpoints.\n"
+            ));
+        }
         if !plans.is_empty() {
             output.push_str(&render(&plans));
         }

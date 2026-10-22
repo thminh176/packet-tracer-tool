@@ -2,6 +2,7 @@ param([switch]$SkipChecks)
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location -LiteralPath $repoRoot
+$releaseVersion = 'v0.1.0'
 $cargoCommand = Get-Command cargo -ErrorAction SilentlyContinue
 $cargoPath = if ($cargoCommand) { $cargoCommand.Source } else { Join-Path $env:USERPROFILE '.cargo/bin/cargo.exe' }
 function Invoke-Cargo([string[]]$Arguments) {
@@ -15,10 +16,12 @@ if (-not $SkipChecks) {
     Invoke-Cargo @('test','--manifest-path','vendor/pktfile/Cargo.toml','--lib')
 }
 Invoke-Cargo @('build','--locked','--release')
-$packageDir = Join-Path $repoRoot 'dist/PKA-Lab-Inspector'
+$packageDir = Join-Path $repoRoot "dist/packet-tracer-tool-$releaseVersion-windows-x64"
+if (Test-Path -LiteralPath $packageDir) { throw 'Package directory already exists. Use a clean build checkout or move the old package before rebuilding.' }
 New-Item -ItemType Directory -Force $packageDir | Out-Null
-Copy-Item -LiteralPath 'target/release/pka-lab-inspector.exe','README.md','LICENSE','THIRD_PARTY_NOTICES.md' -Destination $packageDir -Force
+Copy-Item -LiteralPath 'target/release/pka-lab-inspector.exe','README.md','README.vi.md','LICENSE','THIRD_PARTY_NOTICES.md' -Destination $packageDir -Force
 Copy-Item -LiteralPath 'docs','locales' -Destination $packageDir -Recurse -Force
+Copy-Item -LiteralPath 'third-party' -Destination $packageDir -Recurse -Force
 $licenseDir = Join-Path $packageDir 'third-party-licenses'
 New-Item -ItemType Directory -Force $licenseDir | Out-Null
 $metadataText = & $cargoPath metadata --locked --format-version 1
@@ -42,9 +45,12 @@ foreach ($package in $metadata.packages) {
     }
     "Crate: $($package.name)`nVersion: $($package.version)`nLicense: $($package.license)`nRepository: $($package.repository)" | Set-Content -LiteralPath (Join-Path $destinationDir 'CRATE.txt') -Encoding utf8
 }
-Get-FileHash -LiteralPath (Join-Path $packageDir 'pka-lab-inspector.exe') -Algorithm SHA256 | Format-List | Out-String | Set-Content -LiteralPath (Join-Path $packageDir 'SHA256.txt')
-$archive = Join-Path $repoRoot 'dist/PKA-Lab-Inspector-Windows-x86_64.zip'
+$exeHash = (Get-FileHash -LiteralPath (Join-Path $packageDir 'pka-lab-inspector.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
+"$exeHash  pka-lab-inspector.exe" | Set-Content -Encoding ascii -LiteralPath (Join-Path $packageDir 'SHA256.txt')
+$archive = Join-Path $repoRoot "dist/packet-tracer-tool-$releaseVersion-windows-x64.zip"
 # Registry archives often use a reproducible 1970 timestamp, outside ZIP's range.
 Get-ChildItem -LiteralPath $packageDir -Recurse | Where-Object { $_.LastWriteTime.Year -lt 1980 -or $_.LastWriteTime.Year -gt 2107 } | ForEach-Object { $_.LastWriteTime = [datetime]'2000-01-01T12:00:00' }
 Compress-Archive -LiteralPath $packageDir -DestinationPath $archive -Force
+$zipHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+"$zipHash  $([IO.Path]::GetFileName($archive))" | Set-Content -Encoding ascii -LiteralPath "$archive.sha256"
 Write-Output "Local package: $archive"

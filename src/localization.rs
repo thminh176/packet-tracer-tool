@@ -13,6 +13,13 @@ pub struct Localizer {
     packs: BTreeMap<String, LanguagePack>,
     pub diagnostics: Vec<String>,
 }
+fn locale_key(lang: &str) -> &str {
+    match lang {
+        "en-US" => "en",
+        "vi-VN" => "vi",
+        _ => lang,
+    }
+}
 impl Default for Localizer {
     fn default() -> Self {
         Self::new()
@@ -81,7 +88,8 @@ impl Localizer {
                     Ok(pack)
                 })();
                 match result {
-                    Ok(pack) => {
+                    Ok(mut pack) => {
+                        pack.locale = locale_key(&pack.locale).to_owned();
                         if let Some(existing) = this.packs.get_mut(&pack.locale) {
                             existing.name = pack.name;
                             existing.messages.extend(pack.messages);
@@ -101,10 +109,20 @@ impl Localizer {
     pub fn languages(&self) -> Vec<(String, String)> {
         self.packs
             .values()
-            .map(|p| (p.locale.clone(), p.name.clone()))
+            .map(|p| {
+                (
+                    match p.locale.as_str() {
+                        "en" => "en-US".into(),
+                        "vi" => "vi-VN".into(),
+                        _ => p.locale.clone(),
+                    },
+                    p.name.clone(),
+                )
+            })
             .collect()
     }
     pub fn text(&self, lang: &str, key: &str) -> String {
+        let lang = locale_key(lang);
         self.packs
             .get(lang)
             .and_then(|p| p.messages.get(key))

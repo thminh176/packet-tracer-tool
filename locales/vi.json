@@ -203,6 +203,11 @@
                      "explanation.unsupported_endpoint":  "Thiết bị đầu cuối được cấu hình qua giao diện; thuộc tính này cần dữ liệu IP cụ thể được hỗ trợ.",
                      "explanation.semantic_complete":  "Đã đối chiếu các giá trị được hỗ trợ trên đúng thiết bị và cổng được xác định duy nhất",
                      "explanation.selection_inferred":  "Việc chọn tiêu chí dựa trên NAME checkType=2 (trạng thái được chọn của Qt); đây là suy luận từ cấu trúc quan sát được, chưa phải quy tắc chấm điểm được chứng nhận.",
-                     "explanation.no_assessment":  "Không tìm thấy tiêu chí được chọn. Cấu hình mạng riêng lẻ không phải đề bài; chưa hỗ trợ chấm bằng kịch bản hoặc bộ chấm tùy chỉnh."
+                     "explanation.no_assessment":  "Không tìm thấy tiêu chí được chọn. Cấu hình mạng riêng lẻ không phải đề bài; chưa hỗ trợ chấm bằng kịch bản hoặc bộ chấm tùy chỉnh.",
+                     "disclaimer.cisco":  "Dự án độc lập, không liên kết hoặc được Cisco bảo trợ. Cisco và Packet Tracer là nhãn hiệu của chủ sở hữu tương ứng.",
+                     "ui.paste_target_notice":  "Dán vào CLI của đúng thiết bị trong Packet Tracer. Không chạy trong PowerShell hoặc terminal hệ thống.",
+                     "ui.unsupported_checkpoints_title":  "Tiêu chí chưa hỗ trợ / thao tác giao diện ({count})",
+                     "ui.unsupported_checkpoints_desc":  "Các yêu cầu này cần thao tác giao diện hoặc kiểm tra riêng; không có lệnh IOS được tạo cho chúng.",
+                     "menu.settings":  "Cài đặt"
                  }
 }

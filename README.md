@@ -1,43 +1,65 @@
-# PKA Lab Inspector
+﻿# Packet Tracer Tool
 
-Native Rust desktop inspector for Cisco Packet Tracer activities and saved networks. Opens files read-only, retains assessment paths and weights, and distinguishes verified passes, verified failures, and unsupported or ambiguous checks. Works offline after installation; no Python or external decipher runtime.
+[Tiếng Việt](README.vi.md) · [Download Windows release](https://github.com/thminh176/packet-tracer-tool/releases) · [Compatibility](docs/COMPATIBILITY.md)
 
-## Build on Windows
+**An independent, bilingual desktop companion for learning, inspecting, validating and troubleshooting Packet Tracer labs.** The inspector UI is named PKA Lab Inspector. Native Rust / egui, offline, Windows x86_64; no Python or external decipher runtime.
 
-Install stable Rust for x86_64-pc-windows-msvc and Visual Studio C++ Build Tools with the Windows SDK.
+Independent project, **not affiliated with or endorsed by Cisco**. Cisco and Packet Tracer are trademarks of their respective owner. This repository contains no Cisco binaries, logos, courseware, private activities or answer keys.
+
+## What v0.1.0 does
+
+- Open supported modern PKA/PKT containers read-only; inspect decoded XML.
+- Recursively display selected candidate checkpoints by device/interface with requirements, weight and evidence.
+- Distinguish **Passed**, **Failed** and **Unverified**; manual review stays separate.
+- Generate supported explicit Cisco IOS commands or endpoint GUI instructions. Device scripts deduplicate IP/mask commands and group configuration contexts.
+- Copy individual/device commands; export CSV, Markdown and CLI scripts with source-preserving writes.
+- Switch English/Vietnamese, remember preferences, extend translations using local JSON.
+- Parse in the background; virtualize large checkpoint/XML views.
+
+## Screenshot
+
+The repository screenshot uses only the original synthetic fixture and shows the actual Windows application, not a mockup.
+
+![Actual Windows inspector with original synthetic checkpoints](docs/images/inspector-windows.png)
+
+## Install and use
+
+Download `packet-tracer-tool-v0.1.0-windows-x64.zip` and its `.sha256` from [Releases](https://github.com/thminh176/packet-tracer-tool/releases), verify the checksum, extract and run `pka-lab-inspector.exe`. The EXE is unsigned. See [installation](docs/INSTALLATION.md).
+
+Open an activity, review diagnostics, then optionally load a separate saved network to compare progress. Select a checkpoint for evidence and command support. **Paste IOS commands into Packet Tracer → target device → CLI, never PowerShell or a host shell.** Use GUI instructions for PC/server settings. Unsupported requirements are omitted from executable commands; review them separately.
+
+The application never modifies the source PKA/PKT and does not execute generated commands. Do not export private reports or decoded XML to a public issue.
+
+## Limits you should know
+
+This is a conservative inspector, **not Cisco's native grader**. Selection metadata is inferred from observed schema. Unlabelled embedded network snapshots remain Unverified; current/expected data is used only when reliable. Unsupported checks never count as failures or fabricated passes. Full routing/VLAN/ACL/NAT/DHCP validation, custom/script graders, activity password handling, grade editing, live integration and universal PKA compatibility are absent.
+
+The known 32-checkpoint / 100-point / 7-device reference and a real 126-checkpoint activity have not been certified. The original synthetic 126-checkpoint fixture tests structure and supported comparisons only. See [test evidence](docs/TEST_RESULTS.md) and [compatibility](docs/COMPATIBILITY.md).
+
+## Languages
+
+English (`en-US`) and Vietnamese (`vi-VN`) are supported with legacy `en`/`vi` aliases. JSON catalogs use stable keys and English fallback; external language packs beside the EXE can be added without compiling. See [localization](docs/LOCALIZATION.md). Reports and unknown diagnostics may remain English; technical values, device names and IOS syntax are never translated.
+
+## Build and contribute
+
+Install stable Rust, Visual Studio C++ Build Tools and Windows SDK:
 
 ```powershell
 cargo fmt --all -- --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
-cargo build --locked --release
+cargo build --release --locked
 .\target\release\pka-lab-inspector.exe
 ```
 
-## Workflow
+`powershell -File scripts/build-release.ps1` checks and packages a Windows ZIP with checksums, catalogs, docs and third-party notices. CI runs checks on pull requests and main; version tags build draft releases for verification before publication. See [CONTRIBUTING](CONTRIBUTING.md), [security](SECURITY.md), [architecture](docs/ARCHITECTURE.md) and [changelog](CHANGELOG.md).
 
-Open an activity with the native file picker. Review the overview and diagnostics before interpreting the checkpoint table. Load a separate saved progress file to compare it with the activity. Select a device or status in the sidebar, search for a property, and select a checkpoint to inspect its evidence, raw assessment path, and command support explanation.
+## Acknowledgments and license
 
-Copy individual commands or a grouped device script. PC and server settings use Packet Tracer GUI instructions where appropriate. Review the generated commands in context before applying them. Unsupported values remain explicit. Export CSV or Markdown reports and CLI scripts through the interface. Manual checklist state does not alter automatic scores.
+Original application code is MIT. Container decoding reuses **pktfile 0.2.2** from [TantiE100/pktctl](https://github.com/TantiE100/pktctl), MIT, with a narrow bounded-decompression patch; upstream copyright/license is retained. egui/eframe and all transitive notices are acknowledged in [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES.md). See [license audit](docs/LICENSE_AUDIT.md), [provenance](docs/PROJECT_PROVENANCE.md) and [ecosystem comparison](docs/ECOSYSTEM_COMPARISON.md).
 
-## Compatibility and limits
+Other independent tools include PKA Decipher and cisco-pka-to-xml. Their work is not ours, and visible source is not permission to reuse restrictive implementations. This application aims for complementary offline learning and transparent evidence rather than replacing independent creators or claiming their innovations.
 
-See [test results](docs/TEST_RESULTS.md) for exactly which real and synthetic files were exercised. Support is schema-dependent. A successfully decoded container does not establish reliable validation of every assessment type. Unknown schemas and ambiguous network snapshot roles remain Unverified. The specific 32-checkpoint / 100-point / 7-device baseline must be tested with its actual file; no expected counts are hardcoded.
+## Roadmap
 
-The decoder uses MIT-licensed pktfile 0.2.2, whose published contract is Packet Tracer PKT decoding. PKA compatibility is measured against local real files rather than assumed from the extension. No source was copied or translated from PKA Decipher or other restrictively licensed projects. No score manipulation, activity rewriting, or password bypass is implemented.
-
-## Development
-
-See [architecture](docs/ARCHITECTURE.md), [task graph](docs/MILESTONES.md), and [third-party notices](THIRD_PARTY_NOTICES.md). Real activity files and private answer data are excluded from version control. No remote push or release publication is part of the local build.
-
-Read-only command-line probe:
-
-```powershell
-cargo run --release --example inspect -- "C:\path\activity.pka" "C:\path\saved.pkt"
-```
-
-## Ngôn ngữ / Languages
-
-Ứng dụng hỗ trợ Tiếng Việt và English. Chọn ngôn ngữ trên thanh công cụ; lựa chọn được lưu. Để thêm ngôn ngữ, sao chép `locales/en.json`, dịch phần `messages`, đổi `locale` và `name`, rồi đặt tệp trong thư mục `locales` cạnh EXE. Có thể bấm tải lại ngôn ngữ; không cần sửa mã Rust hoặc biên dịch lại. Xem [hướng dẫn ngôn ngữ](docs/LOCALIZATION.md).
-
-The portable local package is produced by `scripts/build-release.ps1`. It includes the EXE, external language catalogs, documentation, SHA-256 checksum and available third-party license texts. The GitHub Actions workflow checks and packages Windows artifacts without publishing a release.
+After v0.1.0: parser/validator coverage with permitted fixtures, better diagnostics, topology/subnet tools, and investigation of an **optional read-only** pktctl adapter. Live Windows support is unverified and not required for offline use; future live writes require explicit user confirmation. Major features stay on separate branches.

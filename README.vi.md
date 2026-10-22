@@ -1,0 +1,51 @@
+﻿# Packet Tracer Tool
+
+[English](README.md) · [Tải bản Windows](https://github.com/thminh176/packet-tracer-tool/releases)
+
+**Ứng dụng desktop song ngữ độc lập hỗ trợ học, xem, đối chiếu và tìm lỗi trong bài lab Packet Tracer.** Giao diện có tên PKA Lab Inspector, viết bằng Rust / egui, chạy ngoại tuyến trên Windows x86_64, không cần Python.
+
+Dự án **không liên kết và không được Cisco bảo trợ**. Cisco và Packet Tracer là nhãn hiệu của chủ sở hữu tương ứng. Repo không chứa chương trình Cisco, logo, giáo trình, bài thi riêng hay đáp án.
+
+## Chức năng v0.1.0
+
+- Mở tệp PKA/PKT thuộc định dạng được hỗ trợ ở chế độ chỉ đọc, xem XML.
+- Hiện tiêu chí theo thiết bị/cổng, giá trị yêu cầu, điểm và bằng chứng đối chiếu.
+- Phân biệt **Đạt / Chưa đạt / Chưa xác minh**; đánh dấu thủ công không đổi kết quả tự động.
+- Tạo lệnh IOS khi có đủ dữ liệu cụ thể; hướng dẫn giao diện cho PC/máy chủ.
+- Sao chép lệnh từng tiêu chí/thiết bị; xuất CSV, Markdown và tập lệnh. Đã gộp lệnh IP/mask trùng và tóm tắt mục chưa hỗ trợ.
+- Chuyển Việt/Anh, lưu lựa chọn, thêm ngôn ngữ bằng JSON; đọc nền và cuộn dữ liệu lớn.
+
+![Ứng dụng Windows thật sử dụng dữ liệu tổng hợp tự tạo](docs/images/inspector-windows.png)
+
+## Cài đặt
+
+Tải `packet-tracer-tool-v0.1.0-windows-x64.zip` và `.sha256` tại [Releases](https://github.com/thminh176/packet-tracer-tool/releases). Kiểm tra checksum, giải nén toàn bộ và chạy `pka-lab-inspector.exe`. EXE chưa ký số. Giữ thư mục `locales` cạnh EXE để sửa hoặc thêm bản dịch.
+
+Mở bài, đọc chẩn đoán, rồi nạp tệp cấu hình đã lưu để đối chiếu nếu cần. **Lệnh IOS phải dán vào Packet Tracer → đúng thiết bị → CLI; không chạy trong PowerShell.** PC/máy chủ dùng hướng dẫn giao diện. Ứng dụng không tự thực thi lệnh và không sửa tệp PKA/PKT gốc.
+
+## Giới hạn
+
+Ứng dụng chưa thay thế bộ chấm Cisco. Cách chọn tiêu chí dựa trên suy luận cấu trúc quan sát được. Các bản cấu hình nhúng không rõ vai trò, dữ liệu thiếu/mâu thuẫn, biến và bộ chấm tùy chỉnh vẫn là **Chưa xác minh**, không bị giả thành đạt hoặc trượt.
+
+Chưa xác nhận mẫu 32 tiêu chí/100 điểm/7 thiết bị hoặc bài PKA thật có 126 tiêu chí. Mẫu tổng hợp 126 tiêu chí chỉ kiểm tra cấu trúc và một phần đối chiếu. Chưa hỗ trợ đầy đủ kiểm tra routing/VLAN/ACL/NAT/DHCP, chấm bằng script, định dạng cũ và tích hợp trực tiếp Packet Tracer. Xem [bằng chứng kiểm thử](docs/TEST_RESULTS.md) và [tương thích](docs/COMPATIBILITY.md).
+
+Tiếng Việt (`vi-VN`) và English (`en-US`) dùng JSON với fallback tiếng Anh. Tên thiết bị, giá trị kỹ thuật và cú pháp IOS giữ nguyên. Báo cáo và một số thông báo chưa dịch vẫn dùng tiếng Anh. [Hướng dẫn thêm ngôn ngữ](docs/LOCALIZATION.md).
+
+## Phát triển và đóng góp
+
+Cài Rust stable, Visual Studio C++ Build Tools và Windows SDK, rồi chạy:
+
+```powershell
+cargo fmt --all -- --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked
+cargo build --release --locked
+```
+
+Xem [CONTRIBUTING](CONTRIBUTING.md), [kiến trúc](docs/ARCHITECTURE.md), [bảo mật](SECURITY.md) và [changelog](CHANGELOG.md). Không gửi bài thi, giáo trình, đáp án, XML riêng hoặc mật khẩu vào issue.
+
+## Ghi nhận và giấy phép
+
+Mã ứng dụng gốc dùng MIT. Bộ giải mã dùng pktfile 0.2.2 của [TantiE100/pktctl](https://github.com/TantiE100/pktctl), MIT, kèm bản vá giới hạn giải nén; giữ nguyên bản quyền/giấy phép upstream. Xem [thư viện bên thứ ba](THIRD_PARTY_NOTICES.md), [kiểm toán giấy phép](docs/LICENSE_AUDIT.md) và [so sánh hệ sinh thái](docs/ECOSYSTEM_COMPARISON.md). Không sao chép hoặc chuyển ngữ triển khai có giấy phép hạn chế từ PKA Decipher.
+
+Sau bản đầu: mở rộng đối chiếu bằng mẫu hợp lệ, công cụ topology/subnet và nghiên cứu adapter pktctl tùy chọn ở chế độ chỉ đọc. Tính năng lớn làm trên nhánh riêng; không làm hỏng bản đã phát hành.

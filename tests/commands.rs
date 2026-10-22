@@ -288,7 +288,7 @@ fn missing_interface_does_not_guess_and_unknown_is_only_a_comment() {
     assert!(!generate(&c).supported);
     let c = checkpoint("Unrecognized Field", "5");
     let script = device_script(&[c], None);
-    assert!(script.contains("Unsupported"));
+    assert!(script.contains("Omitted 1 unsupported"));
     assert!(!script.contains("configure terminal"));
 }
 
@@ -429,4 +429,19 @@ fn mask_checkpoint_generates_its_own_command_only_with_explicit_address_context(
     let gui = generate(pc_mask);
     assert!(gui.gui);
     assert!(!gui.text.contains("192.0.6.1"));
+}
+
+#[test]
+fn device_script_deduplicates_ip_mask_and_groups_interface_context() {
+    let a =
+        pka_lab_inspector::inspector::parse(include_str!("fixtures/synthetic-126.xml")).unwrap();
+    let script = device_script(&a.checkpoints, Some("R1"));
+    assert_eq!(
+        script.matches("ip address 192.0.1.1 255.255.255.0").count(),
+        1
+    );
+    assert_eq!(script.matches("interface GigabitEthernet0/0").count(), 1);
+    assert_eq!(script.matches("Omitted 16 unsupported").count(), 1);
+    assert!(!script.contains("Unsupported or incomplete explicit data"));
+    assert!(generate(&a.checkpoints[0]).supported && generate(&a.checkpoints[1]).supported);
 }

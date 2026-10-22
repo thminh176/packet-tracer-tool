@@ -640,3 +640,35 @@ fn distributable_synthetic_fixture_has_expected_independent_results() {
     );
     assert_eq!(summary.total_score, 126.0);
 }
+
+#[test]
+fn oversized_assessment_labels_are_rejected_before_path_expansion() {
+    let label = "x".repeat(1024 * 1024);
+    let xml = format!(
+        "<PACKETTRACER5_ACTIVITY><COMPARISONS><NODE><ID>{label}</ID><NODE><NAME checkType='2' nodeValue='x'>Unknown</NAME><ID>x</ID><POINTS>1</POINTS></NODE></NODE></COMPARISONS></PACKETTRACER5_ACTIVITY>"
+    );
+    assert!(
+        parse(&xml)
+            .unwrap_err()
+            .to_string()
+            .contains("label exceeds")
+    );
+}
+
+#[test]
+fn many_repeated_deep_paths_are_bounded_before_materialization() {
+    let labels = (0..8)
+        .map(|_| format!("<NODE><ID>{}</ID>", "x".repeat(500)))
+        .collect::<String>();
+    let leaves=(0..1000).map(|i|format!("<NODE><NAME checkType='2' nodeValue='x'>Unknown</NAME><ID>{i}</ID><POINTS>1</POINTS></NODE>")).collect::<String>();
+    let xml = format!(
+        "<PACKETTRACER5_ACTIVITY><COMPARISONS>{labels}{leaves}{}</COMPARISONS></PACKETTRACER5_ACTIVITY>",
+        "</NODE>".repeat(8)
+    );
+    assert!(
+        parse(&xml)
+            .unwrap_err()
+            .to_string()
+            .contains("budget exceeded")
+    );
+}
