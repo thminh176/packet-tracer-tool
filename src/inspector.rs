@@ -1,0 +1,883 @@
+//! Read-only Packet Tracer inspection. No activity scores or source files are modified.
+use crate::model::{Analysis, Checkpoint, Status};
+use anyhow::{Context, Result, bail, ensure};
+use quick_xml::{Reader, events::Event};
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::Path,
+    time::Instant,
+};
+
+const MAX_BYTES: usize = 64 * 1024 * 1024;
+const MAX_NODES: usize = 1_000_000;
+const MAX_DEPTH: usize = 128;
+
+#[derive(Default, Debug)]
+struct Node {
+    tag: String,
+    attrs: BTreeMap<String, String>,
+    text: String,
+    children: Vec<Node>,
+}
+impl Node {
+    fn child(&self, tag: &str) -> Option<&Node> {
+        self.children.iter().find(|n| n.tag == tag)
+    }
+    fn value(&self, tag: &str) -> &str {
+        self.child(tag).map(|n| n.text.trim()).unwrap_or("")
+    }
+    fn attr(&self, name: &str) -> &str {
+        self.attrs.get(name).map(String::as_str).unwrap_or("")
+    }
+    fn unique_child(&self, tag: &str) -> Option<&Node> {
+        let mut children = self.children.iter().filter(|n| n.tag == tag);
+        let first = children.next()?;
+        if children.next().is_some() {
+            None
+        } else {
+            Some(first)
+        }
+    }
+    fn unique_value(&self, tag: &str) -> Option<&str> {
+        self.unique_child(tag).map(|n| n.text.trim())
+    }
+}
+
+/// Decode the modern authenticated container using the MIT pktfile library.
+/// The repository's narrowly patched MIT codec bounds decompression and checks
+/// the declared XML length; this adapter also limits input and parser complexity.
+pub fn load(path: &Path) -> Result<Analysis> {
+    let started = Instant::now();
+    ensure!(
+        std::fs::metadata(path)?.len() <= MAX_BYTES as u64,
+        "Input exceeds 64 MiB limit"
+    );
+    let bytes = std::fs::read(path).with_context(|| format!("Read {}", path.display()))?;
+    ensure!(bytes.len() <= MAX_BYTES, "Input exceeds 64 MiB limit");
+    let plain = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(&bytes);
+    let xml = if plain.iter().copied().find(|b| !b.is_ascii_whitespace()) == Some(b'<') {
+        std::str::from_utf8(plain)
+            .context("XML is not UTF-8")?
+            .to_owned()
+    } else {
+        std::panic::catch_unwind(|| pktfile::decode(&bytes))
+            .map_err(|_| anyhow::anyhow!("Native pktfile decoder rejected malformed container"))?
+            .context("Native pktfile decode failed (damaged or unsupported container)")?
+    };
+    let mut analysis = parse(&xml)?;
+    analysis.timings.push((
+        "load total (ms)".into(),
+        started.elapsed().as_secs_f64() * 1000.0,
+    ));
+    Ok(analysis)
+}
+
+fn document(xml: &str) -> Result<Node> {
+    ensure!(xml.len() <= MAX_BYTES, "XML exceeds 64 MiB limit");
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().check_end_names = true;
+    let mut stack = vec![Node::default()];
+    let mut count = 0;
+    loop {
+        let event = reader.read_event().context("Malformed XML")?;
+        let empty = matches!(&event, Event::Empty(_));
+        match event {
+            Event::Start(e) | Event::Empty(e) => {
+                count += 1;
+                ensure!(
+                    count <= MAX_NODES && stack.len() <= MAX_DEPTH,
+                    "XML complexity limit exceeded"
+                );
+                let mut node = Node {
+                    tag: std::str::from_utf8(e.name().as_ref())?.to_owned(),
+                    ..Default::default()
+                };
+                for attr in e.attributes() {
+                    let attr = attr.context("Malformed or duplicate XML attribute")?;
+                    node.attrs.insert(
+                        std::str::from_utf8(attr.key.as_ref())?.to_owned(),
+                        attr.decode_and_unescape_value(reader.decoder())?
+                            .into_owned(),
+                    );
+                }
+                if empty {
+                    stack.last_mut().unwrap().children.push(node);
+                } else {
+                    stack.push(node);
+                }
+            }
+            Event::End(_) => {
+                ensure!(stack.len() > 1, "Unexpected closing tag");
+                let node = stack.pop().unwrap();
+                stack.last_mut().unwrap().children.push(node);
+            }
+            Event::Text(e) => stack
+                .last_mut()
+                .unwrap()
+                .text
+                .push_str(&quick_xml::escape::unescape(&e.xml_content()?)?),
+            Event::CData(e) => stack.last_mut().unwrap().text.push_str(&e.xml_content()?),
+            Event::GeneralRef(e) => {
+                let name = e.decode()?;
+                let escaped = format!("&{name};");
+                stack.last_mut().unwrap().text.push_str(
+                    &quick_xml::escape::unescape(&escaped).context("Unknown XML entity")?,
+                );
+            }
+            Event::DocType(_) => bail!("DTD and external entities are unsupported"),
+            Event::Eof => break,
+            _ => (),
+        }
+    }
+    ensure!(stack.len() == 1, "Truncated XML");
+    let mut doc = stack.pop().unwrap();
+    ensure!(
+        doc.children.len() == 1 && doc.text.trim().is_empty(),
+        "Expected exactly one XML root"
+    );
+    Ok(doc.children.remove(0))
+}
+
+fn descendants<'a>(node: &'a Node, tag: &str, out: &mut Vec<&'a Node>) {
+    if node.tag == tag {
+        out.push(node);
+    }
+    for child in &node.children {
+        descendants(child, tag, out);
+    }
+}
+fn role(node: &Node, inherited: &str) -> String {
+    let mut roles = Vec::new();
+    for value in [
+        node.tag.as_str(),
+        node.attr("role"),
+        node.attr("ROLE"),
+        node.attr("type"),
+        node.attr("TYPE"),
+        node.value("ROLE"),
+        inherited,
+    ] {
+        match value.to_ascii_lowercase().as_str() {
+            "answer" | "answer_network" | "answernetwork" => roles.push("answer"),
+            "initial" | "initial_network" | "initialnetwork" => roles.push("initial"),
+            "current" | "working" | "current_network" | "currentnetwork" => roles.push("current"),
+            _ => (),
+        }
+    }
+    roles.sort();
+    roles.dedup();
+    if roles.len() == 1 {
+        roles[0].into()
+    } else if roles.is_empty() {
+        inherited.into()
+    } else {
+        "ambiguous".into()
+    }
+}
+fn snapshots<'a>(node: &'a Node, inherited: &str, out: &mut Vec<(&'a Node, String)>) {
+    let r = role(node, inherited);
+    if node.tag == "PACKETTRACER5" {
+        out.push((node, r));
+        return;
+    }
+    for child in &node.children {
+        snapshots(child, &r, out);
+    }
+}
+
+fn label(node: &Node) -> &str {
+    let id = node.value("ID");
+    if !id.is_empty() {
+        id
+    } else {
+        node.value("NAME")
+    }
+}
+fn assessment(
+    node: &Node,
+    ancestry: &mut Vec<String>,
+    out: &mut Vec<Checkpoint>,
+    diagnostics: &mut Vec<String>,
+    inventory: &mut usize,
+) {
+    if node.tag != "NODE" {
+        for c in &node.children {
+            assessment(c, ancestry, out, diagnostics, inventory);
+        }
+        return;
+    }
+    ancestry.push(label(node).to_owned());
+    let nested: Vec<_> = node.children.iter().filter(|n| n.tag == "NODE").collect();
+    let empty_group = node
+        .child("NAME")
+        .is_some_and(|n| n.attr("headNode") == "true" && n.attr("nodeValue").is_empty())
+        && node.value("POINTS").is_empty();
+    if nested.is_empty() && !empty_group {
+        let name = node.child("NAME");
+        // checkType tracks Qt's 0/1/2 check states in observed PT trees.
+        // Unchecked/partial terminal inventory is not an assessed checkpoint.
+        if name.is_some_and(|n| {
+            matches!(n.attr("checkType"), "0" | "1")
+                || ["enabled", "selected", "checked"]
+                    .iter()
+                    .any(|a| matches!(n.attr(a), "false" | "no" | "0"))
+        }) {
+            *inventory += 1;
+            ancestry.pop();
+            return;
+        }
+        let weight = if node.value("POINTS").is_empty() {
+            0.0
+        } else {
+            match node.value("POINTS").parse::<f64>() {
+                Ok(w) if w.is_finite() && w >= 0.0 => w,
+                _ => {
+                    diagnostics.push(format!(
+                        "Invalid weight at {}: excluded from score",
+                        ancestry.join(" / ")
+                    ));
+                    0.0
+                }
+            }
+        };
+        let expected = name.map(|n| n.attr("nodeValue")).unwrap_or("").to_owned();
+        let unsupported = name.is_some_and(|n| {
+            n.attr("checkType") != "2"
+                || (n.attr("variableEnabled") == "true" && !n.attr("variableName").is_empty())
+                || n.attr("overrideDBGrading") == "true"
+        }) || node.children.iter().filter(|n| n.tag == "NAME").count() != 1;
+        let property = if node.value("NAME").is_empty() {
+            label(node)
+        } else {
+            node.value("NAME")
+        };
+        out.push(Checkpoint {
+            id: ancestry.join(" / "),
+            path: ancestry.join(" / "),
+            property: property.to_owned(),
+            category: ancestry
+                .get(ancestry.len().saturating_sub(2))
+                .cloned()
+                .unwrap_or_default(),
+            expected,
+            weight,
+            explanation: if unsupported {
+                "Custom, variable, disabled or ambiguous assessment requires Packet Tracer grading"
+            } else {
+                "No verified current snapshot evidence"
+            }
+            .into(),
+            evidence: vec![if unsupported {
+                "assessment:unsupported".into()
+            } else {
+                "assessment:compare".into()
+            }],
+            ..Default::default()
+        });
+    } else {
+        for c in nested {
+            assessment(c, ancestry, out, diagnostics, inventory);
+        }
+    }
+    ancestry.pop();
+}
+
+/// Extract selected assessment leaves, including unknown checks. Never infer
+/// snapshot roles from their order, scores, or similarity to expected values.
+pub fn parse(xml: &str) -> Result<Analysis> {
+    let started = Instant::now();
+    let root = document(xml)?;
+    ensure!(
+        matches!(
+            root.tag.as_str(),
+            "PACKETTRACER5" | "PACKETTRACER5_ACTIVITY" | "PACKETTRACER_ACTIVITY"
+        ),
+        "Unsupported Packet Tracer XML root"
+    );
+    let mut result = Analysis {
+        xml: xml.to_owned(),
+        ..Default::default()
+    };
+    let mut trees = Vec::new();
+    descendants(&root, "COMPARISONS", &mut trees);
+    let inventory_only = trees.is_empty();
+    if inventory_only {
+        descendants(&root, "INITIALSETUP", &mut trees);
+    }
+    let mut inventory = 0;
+    for tree in trees {
+        assessment(
+            tree,
+            &mut Vec::new(),
+            &mut result.checkpoints,
+            &mut result.diagnostics,
+            &mut inventory,
+        );
+    }
+    if inventory_only && !result.checkpoints.is_empty() {
+        inventory += result.checkpoints.len();
+        result.checkpoints.clear();
+    }
+    if inventory > 0 {
+        result.diagnostics.push(format!("Excluded {inventory} unchecked/partial/disabled terminal inventory nodes from assessment counts and scores; original XML retained"));
+    }
+    if !result.checkpoints.is_empty() {
+        result.diagnostics.push("Selection uses observed NAME checkType=2 (Qt checked state); Packet Tracer schema mapping is inferred, not a certified grading contract".into());
+    }
+    if inventory_only && inventory > 0 {
+        result
+            .diagnostics
+            .push("No COMPARISONS tree; INITIALSETUP leaves are an unverified inventory".into());
+    }
+    let mut snaps = Vec::new();
+    snapshots(&root, "", &mut snaps);
+    let mut devices = Vec::new();
+    for (snapshot, _) in &snaps {
+        descendants(snapshot, "DEVICE", &mut devices);
+    }
+    for checkpoint in &mut result.checkpoints {
+        let mut names: Vec<_> = devices
+            .iter()
+            .map(|d| d.child("ENGINE").unwrap_or(d).value("NAME"))
+            .filter(|n| !n.is_empty() && checkpoint.path.split(" / ").any(|p| p == *n))
+            .collect();
+        names.sort();
+        names.dedup();
+        if names.len() == 1 {
+            checkpoint.device = names[0].to_owned();
+            let matching: Vec<_> = devices
+                .iter()
+                .filter(|d| d.child("ENGINE").unwrap_or(d).value("NAME") == checkpoint.device)
+                .collect();
+            let mut types: Vec<_> = matching
+                .iter()
+                .map(|d| d.child("ENGINE").unwrap_or(d).value("TYPE"))
+                .filter(|s| !s.is_empty())
+                .collect();
+            types.sort();
+            types.dedup();
+            if types.len() == 1 {
+                checkpoint.device_type = types[0].into();
+            }
+            let mut ports = Vec::new();
+            for d in matching {
+                descendants(d, "PORT", &mut ports);
+            }
+            let mut port_names: Vec<_> = ports
+                .iter()
+                .map(|p| p.value("NAME"))
+                .filter(|n| !n.is_empty() && checkpoint.path.split(" / ").any(|p| p == *n))
+                .collect();
+            port_names.sort();
+            port_names.dedup();
+            if port_names.len() == 1 {
+                checkpoint.interface = port_names[0].into();
+            }
+        }
+        if checkpoint.interface.is_empty() {
+            checkpoint.interface = checkpoint
+                .path
+                .split(" / ")
+                .find(|s| interface_name(s))
+                .unwrap_or("")
+                .to_owned();
+        }
+    }
+    let mut ids = HashMap::<String, usize>::new();
+    for c in &result.checkpoints {
+        *ids.entry(c.id.clone()).or_default() += 1;
+    }
+    for c in &mut result.checkpoints {
+        if ids[&c.id] > 1 {
+            c.evidence.push("assessment:ambiguous".into());
+            c.explanation = "Duplicate assessment identity; retained without validation".into();
+        }
+    }
+    attach_command_context(&mut result.checkpoints);
+    if root.tag != "PACKETTRACER5" && snaps.iter().any(|(_, r)| r.is_empty() || r == "ambiguous") {
+        result.diagnostics.push("Embedded snapshot roles are ambiguous; no positional role assumptions or automatic grading applied".into());
+    }
+    if result.checkpoints.is_empty() {
+        result
+            .diagnostics
+            .push("No selected assessment leaves found; network state alone is not an assessment and custom/script scoring is not evaluated".into());
+    }
+    if snaps.iter().any(|(_, r)| r == "current") {
+        let progress = Analysis {
+            xml: xml.to_owned(),
+            ..Default::default()
+        };
+        compare(&mut result, &progress);
+    }
+    result.timings.push((
+        "parse (ms)".into(),
+        started.elapsed().as_secs_f64() * 1000.0,
+    ));
+    Ok(result)
+}
+
+fn interface_name(s: &str) -> bool {
+    [
+        "FastEthernet",
+        "GigabitEthernet",
+        "Ethernet",
+        "Serial",
+        "Loopback",
+        "Vlan",
+    ]
+    .iter()
+    .any(|p| {
+        s.starts_with(p)
+            && s[p.len()..]
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_digit())
+    })
+}
+fn sentinel(s: &str) -> bool {
+    matches!(
+        s.trim().to_ascii_lowercase().as_str(),
+        "" | "--"
+            | "n/a"
+            | "none"
+            | "null"
+            | "unknown"
+            | "<not set>"
+            | "not set"
+            | "-1"
+            | "65535"
+            | "4294967295"
+            | "0.0.0.0"
+            | "::"
+    ) || s.contains("${")
+}
+fn property_tag(s: &str) -> Option<&'static str> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "ip address" | "ipv4 address" => Some("IP"),
+        "subnet mask" => Some("SUBNET"),
+        "default gateway" => Some("PORT_GATEWAY"),
+        "hostname" | "host name" => Some("HOSTNAME"),
+        "display name" => Some("NAME"),
+        "ipv6 address" | "ipv6 addresses" => Some("IPV6_ADDRESSES"),
+        "ipv6 prefix length" => Some("IPV6_PREFIX"),
+        "link local" | "link local address" | "ipv6 link local address" => Some("IPV6_LINK_LOCAL"),
+        "ipv6 default gateway" => Some("IPV6_PORT_GATEWAY"),
+        "port status" => Some("POWER"),
+        "ipv6 enable" => Some("IPV6_ENABLED"),
+        "ipv6 auto config" => Some("IPV6_ADDRESS_AUTOCONFIG"),
+        _ => None,
+    }
+}
+fn subnet_mask(value: &str) -> bool {
+    mask_prefix(value).is_some()
+}
+fn mask_prefix(value: &str) -> Option<u8> {
+    let value = value.trim();
+    if !value.contains('.') {
+        return value
+            .trim_start_matches('/')
+            .parse::<u8>()
+            .ok()
+            .filter(|p| (1..=32).contains(p));
+    }
+    value.parse::<std::net::Ipv4Addr>().ok().and_then(|mask| {
+        let inverse = !u32::from(mask);
+        inverse
+            .checked_add(1)
+            .filter(|next| inverse & next == 0)
+            .map(|_| u32::from(mask).count_ones() as u8)
+    })
+}
+fn ipv6(value: &str) -> Option<(std::net::Ipv6Addr, Option<u8>)> {
+    let (address, prefix) = if let Some((address, prefix)) = value.trim().split_once('/') {
+        (
+            address,
+            Some(prefix.parse::<u8>().ok().filter(|p| *p <= 128)?),
+        )
+    } else {
+        (value.trim(), None)
+    };
+    let address = address.parse::<std::net::Ipv6Addr>().ok()?;
+    if address.is_unspecified() {
+        return None;
+    }
+    Some((address, prefix))
+}
+fn semantic_equal(tag: &str, expected: &str, actual: &str) -> Option<bool> {
+    match tag {
+        "IP" | "PORT_GATEWAY" => Some(
+            expected.parse::<std::net::Ipv4Addr>().ok()?
+                == actual.parse::<std::net::Ipv4Addr>().ok()?,
+        ),
+        "SUBNET" => Some(mask_prefix(expected)? == mask_prefix(actual)?),
+        "IPV6_ADDRESSES" | "IPV6_LINK_LOCAL" | "IPV6_PORT_GATEWAY" => {
+            let (e, ep) = ipv6(expected)?;
+            let (a, ap) = ipv6(actual)?;
+            if ep.is_some() && ap.is_none() {
+                return None;
+            }
+            Some(e == a && (ep.is_none() || ep == ap))
+        }
+        "IPV6_PREFIX" => Some(
+            expected.parse::<u8>().ok().filter(|p| *p <= 128)?
+                == actual.parse::<u8>().ok().filter(|p| *p <= 128)?,
+        ),
+        "POWER" | "IPV6_ENABLED" | "IPV6_ADDRESS_AUTOCONFIG" => {
+            let boolean = |s: &str| match s.trim().to_ascii_lowercase().as_str() {
+                "true" => Some(true),
+                "false" => Some(false),
+                _ => None,
+            };
+            Some(boolean(expected)? == boolean(actual)?)
+        }
+        "HOSTNAME"
+            if expected.contains(char::is_whitespace) || actual.contains(char::is_whitespace) =>
+        {
+            None
+        }
+        "NAME" | "HOSTNAME" => Some(expected.trim() == actual.trim()),
+        _ => None,
+    }
+}
+fn attach_command_context(checks: &mut [Checkpoint]) {
+    let mut masks = HashMap::<(String, String, String), Vec<String>>::new();
+    let mut prefixes = HashMap::<(String, String, String), Vec<u8>>::new();
+    let context = |c: &Checkpoint| {
+        (
+            c.device.clone(),
+            c.interface.clone(),
+            c.path
+                .rsplit_once(" / ")
+                .map(|p| p.0)
+                .unwrap_or("")
+                .to_owned(),
+        )
+    };
+    for c in checks.iter() {
+        if property_tag(&c.property) == Some("SUBNET")
+            && !c.device.is_empty()
+            && !c.interface.is_empty()
+            && c.evidence.iter().all(|e| e == "assessment:compare")
+            && subnet_mask(&c.expected)
+            && !sentinel(&c.expected)
+        {
+            masks.entry(context(c)).or_default().push(
+                std::net::Ipv4Addr::from(u32::MAX << (32 - mask_prefix(&c.expected).unwrap()))
+                    .to_string(),
+            );
+        }
+        if property_tag(&c.property) == Some("IPV6_PREFIX")
+            && !c.device.is_empty()
+            && !c.interface.is_empty()
+            && c.evidence.iter().all(|e| e == "assessment:compare")
+            && let Ok(prefix) = c.expected.parse::<u8>()
+            && prefix <= 128
+        {
+            prefixes.entry(context(c)).or_default().push(prefix);
+        }
+    }
+    for c in checks {
+        if property_tag(&c.property) == Some("IP")
+            && c.evidence.iter().all(|e| e == "assessment:compare")
+            && c.expected.parse::<std::net::Ipv4Addr>().is_ok()
+            && !sentinel(&c.expected)
+            && let Some(values) = masks.get(&context(c)).filter(|v| v.len() == 1)
+        {
+            c.evidence.push(format!("commands:ipv4-mask={}", values[0]));
+        }
+        if property_tag(&c.property) == Some("IPV6_ADDRESSES")
+            && !c.device.is_empty()
+            && !c.interface.is_empty()
+            && c.evidence.iter().all(|e| e == "assessment:compare")
+            && let Some((_, explicit_prefix)) = ipv6(&c.expected)
+        {
+            if let Some(prefix) = explicit_prefix
+                && prefixes
+                    .get(&context(c))
+                    .is_some_and(|values| values.len() != 1 || values[0] != prefix)
+            {
+                continue;
+            }
+            let prefix = explicit_prefix.or_else(|| {
+                prefixes
+                    .get(&context(c))
+                    .filter(|p| p.len() == 1)
+                    .map(|p| p[0])
+            });
+            if let Some(prefix) = prefix {
+                c.evidence.push(format!("commands:ipv6-prefix={prefix}"));
+            }
+        }
+    }
+}
+fn ios_observations(device: &Node, interface: &str, tag: &str) -> Vec<String> {
+    let mut configs = Vec::new();
+    descendants(device, "RUNNINGCONFIG", &mut configs);
+    if configs.len() != 1 {
+        return Vec::new();
+    }
+    let lines: Vec<_> = configs[0]
+        .children
+        .iter()
+        .filter(|n| n.tag == "LINE")
+        .map(|n| n.text.as_str())
+        .collect();
+    if lines.iter().any(|line| {
+        [
+            "banner ",
+            "macro name ",
+            "crypto pki certificate",
+            "event manager applet ",
+        ]
+        .iter()
+        .any(|prefix| line.trim_start().starts_with(prefix))
+    }) {
+        return Vec::new();
+    }
+    if tag == "HOSTNAME" && interface.is_empty() {
+        return lines
+            .iter()
+            .filter_map(|line| line.trim().strip_prefix("hostname ").map(str::trim))
+            .filter(|name| !name.is_empty() && !name.contains(char::is_whitespace))
+            .map(str::to_owned)
+            .collect();
+    }
+    if interface.is_empty() {
+        return Vec::new();
+    }
+    let mut active = false;
+    let mut sections = 0;
+    let mut values = Vec::new();
+    for line in lines {
+        let trimmed = line.trim();
+        if let Some(name) = trimmed.strip_prefix("interface ") {
+            active = name.eq_ignore_ascii_case(interface);
+            if active {
+                sections += 1;
+            }
+            continue;
+        }
+        if matches!(trimmed, "!" | "exit" | "end")
+            || (!line.starts_with(char::is_whitespace) && !trimmed.is_empty())
+        {
+            active = false;
+        }
+        if !active {
+            continue;
+        }
+        let words: Vec<_> = trimmed.split_whitespace().collect();
+        match tag {
+            "IP" | "SUBNET" if words.starts_with(&["ip", "address"]) => {
+                if words.len() != 4 {
+                    return Vec::new();
+                }
+                values.push(words[if tag == "IP" { 2 } else { 3 }].to_owned());
+            }
+            "IPV6_ADDRESSES" | "IPV6_LINK_LOCAL" | "IPV6_PREFIX"
+                if words.starts_with(&["ipv6", "address"]) =>
+            {
+                if words.len() == 4 && words[3] == "link-local" {
+                    if tag == "IPV6_LINK_LOCAL" {
+                        values.push(words[2].to_owned());
+                    }
+                } else if words.len() == 3 && words[2].contains('/') {
+                    if tag == "IPV6_ADDRESSES" {
+                        values.push(words[2].to_owned());
+                    }
+                    if tag == "IPV6_PREFIX"
+                        && let Some((_, prefix)) = words[2].split_once('/')
+                    {
+                        values.push(prefix.into());
+                    }
+                } else {
+                    return Vec::new();
+                }
+            }
+            "POWER" if trimmed == "shutdown" => values.push("false".into()),
+            "POWER" if trimmed == "no shutdown" => values.push("true".into()),
+            "IPV6_ENABLED" if trimmed == "ipv6 enable" => values.push("true".into()),
+            "IPV6_ENABLED" if trimmed == "no ipv6 enable" => values.push("false".into()),
+            _ => (),
+        }
+    }
+    if sections == 1 { values } else { Vec::new() }
+}
+fn observations(node: &Node, device: &str, interface: &str, tag: &str) -> Vec<String> {
+    let mut devices = Vec::new();
+    descendants(node, "DEVICE", &mut devices);
+    let matching: Vec<_> = devices
+        .into_iter()
+        .filter(|d| {
+            let engine = d.unique_child("ENGINE").unwrap_or(d);
+            engine.unique_value("NAME") == Some(device)
+        })
+        .collect();
+    if matching.len() != 1 {
+        return Vec::new();
+    }
+    let engine = matching[0].unique_child("ENGINE").unwrap_or(matching[0]);
+    if tag == "HOSTNAME" {
+        return ios_observations(matching[0], interface, tag);
+    }
+    if interface.is_empty() {
+        return engine
+            .unique_value(tag)
+            .map(|v| vec![v.into()])
+            .unwrap_or_default();
+    }
+    let mut ports = Vec::new();
+    descendants(engine, "PORT", &mut ports);
+    let ports: Vec<_> = ports
+        .into_iter()
+        .filter(|p| p.unique_value("NAME") == Some(interface))
+        .collect();
+    if ports.is_empty() {
+        return ios_observations(matching[0], interface, tag);
+    }
+    if ports.len() != 1 {
+        return Vec::new();
+    }
+    if matches!(tag, "IPV6_ADDRESSES" | "IPV6_PREFIX") {
+        let Some(addresses) = ports[0].unique_child("IPV6_ADDRESSES") else {
+            return Vec::new();
+        };
+        let mut values = Vec::new();
+        for address in &addresses.children {
+            if address.tag != "IPV6_ADDRESS" {
+                return Vec::new();
+            }
+            let (Some(ip), Some(prefix)) = (
+                address.unique_value("ADDRESS"),
+                address.unique_value("PREFIX"),
+            ) else {
+                return Vec::new();
+            };
+            if ipv6(&format!("{ip}/{prefix}")).is_none() {
+                return Vec::new();
+            }
+            values.push(if tag == "IPV6_PREFIX" {
+                prefix.to_owned()
+            } else {
+                format!("{ip}/{prefix}")
+            });
+        }
+        return consistent_observations(values, ios_observations(matching[0], interface, tag), tag);
+    }
+    let values = ports[0]
+        .unique_value(tag)
+        .map(|v| vec![v.into()])
+        .unwrap_or_default();
+    consistent_observations(values, ios_observations(matching[0], interface, tag), tag)
+}
+fn consistent_observations(values: Vec<String>, ios: Vec<String>, tag: &str) -> Vec<String> {
+    if !ios.is_empty()
+        && (values.len() != ios.len()
+            || values.iter().any(|value| {
+                !ios.iter()
+                    .any(|other| semantic_equal(tag, value, other) == Some(true))
+            }))
+    {
+        Vec::new()
+    } else {
+        values
+    }
+}
+
+/// Validate a small supported semantic subset against an explicitly identified
+/// current network or standalone PKT. Missing/ambiguous/unsupported stays unknown.
+pub fn compare(activity: &mut Analysis, progress: &Analysis) {
+    for check in &mut activity.checkpoints {
+        check.status = Status::Unverified;
+        check.current = None;
+        check
+            .evidence
+            .retain(|s| s.starts_with("assessment:") || s.starts_with("commands:"));
+        check.explanation = "No unique supported current-state observation".into();
+    }
+    let root = match document(&progress.xml) {
+        Ok(root) => root,
+        Err(e) => {
+            activity
+                .diagnostics
+                .push(format!("Progress XML invalid: {e}"));
+            return;
+        }
+    };
+    if !matches!(
+        root.tag.as_str(),
+        "PACKETTRACER5" | "PACKETTRACER5_ACTIVITY" | "PACKETTRACER_ACTIVITY"
+    ) {
+        activity
+            .diagnostics
+            .push("Progress has an unsupported XML root".into());
+        return;
+    }
+    let mut snaps = Vec::new();
+    snapshots(&root, "", &mut snaps);
+    let current: Vec<_> = snaps
+        .iter()
+        .filter(|(_, r)| root.tag == "PACKETTRACER5" || r == "current")
+        .collect();
+    for check in &mut activity.checkpoints {
+        if current.len() != 1
+            || check.device.is_empty()
+            || sentinel(&check.expected)
+            || check.evidence.iter().any(|s| {
+                matches!(
+                    s.as_str(),
+                    "assessment:unsupported" | "assessment:ambiguous" | "assessment:inventory"
+                )
+            })
+        {
+            continue;
+        }
+        let Some(tag) = property_tag(&check.property) else {
+            continue;
+        };
+        if matches!(tag, "NAME" | "HOSTNAME") && !check.interface.is_empty() {
+            continue;
+        }
+        let values = observations(current[0].0, &check.device, &check.interface, tag);
+        if values.is_empty()
+            || (values.len() > 1 && tag != "IPV6_ADDRESSES")
+            || values.iter().any(|v| sentinel(v))
+        {
+            continue;
+        }
+        let comparisons: Option<Vec<bool>> = values
+            .iter()
+            .map(|actual| semantic_equal(tag, check.expected.trim(), actual))
+            .collect();
+        let Some(comparisons) = comparisons else {
+            continue;
+        };
+        let actual = values.join(", ");
+        check.current = Some(actual.clone());
+        check.status = if comparisons.into_iter().any(|equal| equal) {
+            Status::Passed
+        } else {
+            Status::Failed
+        };
+        check.explanation =
+            "Compared supported explicit values in a uniquely identified device/interface".into();
+        check.evidence.push(format!(
+            "expected assessment / {}: {}",
+            check.path, check.expected
+        ));
+        check.evidence.push(
+            if root.tag == "PACKETTRACER5" {
+                "current role: standalone PKT"
+            } else {
+                "current role: explicit metadata"
+            }
+            .into(),
+        );
+        check.evidence.push(format!(
+            "current network / {} / {} / {tag}: {actual}",
+            check.device, check.interface
+        ));
+    }
+    if current.len() != 1 {
+        activity.diagnostics.push("Comparison requires exactly one explicitly identified current network or a standalone PKT".into());
+    }
+}
