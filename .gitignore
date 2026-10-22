@@ -3,3 +3,6 @@
 /private-fixtures/
 *.pka
 *.pkt
+
+**/target/
+/vendor/pktfile/Cargo.lock
