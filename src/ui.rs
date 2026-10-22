@@ -154,6 +154,7 @@ pub struct InspectorApp {
     pub loading_description: Option<String>,
     pub status_message: Option<String>,
     pub status_timestamp: Option<Instant>,
+    pub show_settings: bool,
 
     // Preferences and checklists
     pub preferences: Preferences,
@@ -193,6 +194,7 @@ impl InspectorApp {
             loading_description: None,
             status_message: None,
             status_timestamp: Some(Instant::now()),
+            show_settings: false,
 
             preferences: Preferences::default(),
             manual_checklists: HashMap::new(),
@@ -709,22 +711,30 @@ impl InspectorApp {
                             self.localizer
                                 .languages()
                                 .into_iter()
-                                .find(|(code, _)| code == &self.preferences.language)
+                                .find(|(code, _)| {
+                                    code == &self.preferences.language
+                                        || (code == "vi-VN" && self.preferences.language == "vi")
+                                        || (code == "en-US" && self.preferences.language == "en")
+                                })
                                 .map(|(_, name)| name)
                                 .unwrap_or_else(|| self.preferences.language.clone()),
                         )
                         .show_ui(ui, |ui| {
                             for (code, name) in self.localizer.languages() {
-                                if ui
-                                    .selectable_value(&mut self.preferences.language, code, name)
-                                    .changed()
-                                {
+                                let is_selected = code == self.preferences.language
+                                    || (code == "vi-VN" && self.preferences.language == "vi")
+                                    || (code == "en-US" && self.preferences.language == "en");
+                                if ui.selectable_label(is_selected, &name).clicked() {
+                                    self.preferences.language = code;
                                     self.status_message = None;
                                 }
                             }
                         });
                     if ui.small_button(tr("menu.reload_languages")).clicked() {
                         self.localizer = Arc::new(Localizer::new());
+                    }
+                    if ui.button(tr("menu.settings")).clicked() {
+                        self.show_settings = !self.show_settings;
                     }
                     ui.separator();
 
@@ -1689,6 +1699,12 @@ impl InspectorApp {
                 let script = commands::device_script(&incomplete, None);
                 to_copy = Some((script, ""));
             }
+            ui.separator();
+            ui.label(
+                egui::RichText::new(tr("ui.paste_target_notice"))
+                    .small()
+                    .color(egui::Color32::from_rgb(255, 204, 128)),
+            );
         });
         ui.add_space(8.0);
 
@@ -1866,6 +1882,86 @@ impl InspectorApp {
 
         ui.add_space(8.0);
 
+        // Visible concise localized instruction banner
+        egui::Frame::group(ui.style())
+            .inner_margin(egui::Margin::symmetric(10, 6))
+            .stroke(egui::Stroke::new(
+                1.0_f32,
+                egui::Color32::from_rgb(255, 179, 0),
+            ))
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.colored_label(egui::Color32::from_rgb(255, 179, 0), "⚠");
+                    ui.label(
+                        egui::RichText::new(tr("ui.paste_target_notice"))
+                            .strong()
+                            .color(egui::Color32::from_rgb(255, 204, 128)),
+                    );
+                });
+            });
+
+        ui.add_space(6.0);
+
+        // Show unsupported / GUI details separately with concise localized summaries
+        let unsupported_checkpoints: Vec<&Checkpoint> = a
+            .checkpoints
+            .iter()
+            .filter(|c| {
+                if let Some(target) = target_device
+                    && c.device != target
+                {
+                    return false;
+                }
+                let cmd = commands::generate(c);
+                !cmd.supported || cmd.gui
+            })
+            .collect();
+
+        if !unsupported_checkpoints.is_empty() {
+            let count_str = unsupported_checkpoints.len().to_string();
+            let title = tf("ui.unsupported_checkpoints_title", &[("count", &count_str)]);
+            egui::CollapsingHeader::new(egui::RichText::new(title).strong())
+                .id_salt("unsupported_checkpoints_collapsing")
+                .show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new(tr("ui.unsupported_checkpoints_desc"))
+                            .small()
+                            .weak(),
+                    );
+                    ui.add_space(4.0);
+                    egui::ScrollArea::vertical()
+                        .id_salt("unsupported_checkpoints_scroll")
+                        .max_height(140.0)
+                        .show(ui, |ui| {
+                            for c in &unsupported_checkpoints {
+                                let cmd = commands::generate(c);
+                                let reason = if cmd.gui {
+                                    tf("ui.manual_gui_action_value", &[("value", &cmd.text)])
+                                } else {
+                                    catalog.message(&language, &cmd.explanation)
+                                };
+                                ui.horizontal(|ui| {
+                                    ui.colored_label(
+                                        if cmd.gui {
+                                            egui::Color32::LIGHT_BLUE
+                                        } else {
+                                            egui::Color32::from_rgb(255, 179, 0)
+                                        },
+                                        "•",
+                                    );
+                                    ui.strong(&c.device);
+                                    if !c.interface.is_empty() {
+                                        ui.label(format!("({})", c.interface));
+                                    }
+                                    ui.label(&c.property);
+                                    ui.label(egui::RichText::new(format!("— {reason}")).weak());
+                                });
+                            }
+                        });
+                });
+            ui.add_space(6.0);
+        }
+
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.add(
                 egui::TextEdit::multiline(&mut script.as_str())
@@ -2018,6 +2114,68 @@ impl InspectorApp {
             self.copy_text_with_feedback(ctx, text, "");
         }
     }
+
+    /// Settings dialog for user preferences, language selection, and original branding.
+    pub fn render_settings_window(&mut self, ctx: &egui::Context) {
+        let catalog = self.localizer.clone();
+        let language = self.preferences.language.clone();
+        let tr = |key: &str| catalog.text(&language, key);
+        let mut open = self.show_settings;
+        egui::Window::new(tr("menu.settings"))
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false)
+            .default_width(380.0)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(tr("menu.language"));
+                    egui::ComboBox::from_id_salt("settings_language_selector")
+                        .selected_text(
+                            self.localizer
+                                .languages()
+                                .into_iter()
+                                .find(|(code, _)| {
+                                    code == &self.preferences.language
+                                        || (code == "vi-VN" && self.preferences.language == "vi")
+                                        || (code == "en-US" && self.preferences.language == "en")
+                                })
+                                .map(|(_, name)| name)
+                                .unwrap_or_else(|| self.preferences.language.clone()),
+                        )
+                        .show_ui(ui, |ui| {
+                            for (code, name) in self.localizer.languages() {
+                                let is_selected = code == self.preferences.language
+                                    || (code == "vi-VN" && self.preferences.language == "vi")
+                                    || (code == "en-US" && self.preferences.language == "en");
+                                if ui.selectable_label(is_selected, &name).clicked() {
+                                    self.preferences.language = code;
+                                    self.status_message = None;
+                                }
+                            }
+                        });
+                    if ui.small_button(tr("menu.reload_languages")).clicked() {
+                        self.localizer = Arc::new(Localizer::new());
+                    }
+                });
+                ui.add_space(8.0);
+                ui.separator();
+                ui.strong(tr("ui.view_options"));
+                ui.checkbox(&mut self.preferences.compact_view, tr("ui.compact_rows"));
+                ui.checkbox(
+                    &mut self.preferences.show_only_manual_unchecked,
+                    tr("ui.show_only_unchecked"),
+                );
+                ui.add_space(8.0);
+                ui.separator();
+                ui.strong(tr("app.title"));
+                ui.label(tr("app.subtitle"));
+                ui.label(tr("info.offline"));
+                ui.label(tr("info.read_only"));
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new(tr("disclaimer.cisco")).weak().small());
+            });
+        self.show_settings = open;
+    }
 }
 
 fn xml_chunks(xml: &str) -> Vec<(usize, usize)> {
@@ -2112,6 +2270,10 @@ impl eframe::App for InspectorApp {
         self.render_bottom_panel(ctx);
         self.render_detail_panel(ctx);
         self.render_central_panel(ctx);
+
+        if self.show_settings {
+            self.render_settings_window(ctx);
+        }
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
