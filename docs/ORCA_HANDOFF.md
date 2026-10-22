@@ -50,9 +50,11 @@
 
 - **Active Branch:** `main` (tracked to `origin/main`).
 - **Release Version:** `v0.1.0` (matching `Cargo.toml`).
+- **Release URL:** [https://github.com/thminh176/packet-tracer-tool/releases/tag/v0.1.0](https://github.com/thminh176/packet-tracer-tool/releases/tag/v0.1.0)
+- **GitHub Release Status:** Published (`Latest`), assets attached (`packet-tracer-tool-v0.1.0-windows-x64.zip` and `.sha256`).
 - **GitHub Actions Status:**
-  - Workflow: `.github/workflows/ci.yml` (Runs `dependency-audit` and `windows` test/build).
-  - Workflow: `.github/workflows/release.yml` (Triggered on `v*` tag push to build verified artifacts and create draft release).
+  - Workflow: `.github/workflows/ci.yml` (Completed successfully: `dependency-audit` and `windows`).
+  - Workflow: `.github/workflows/release.yml` (Completed successfully: build, verify, upload, and publish).
 
 ---
 
