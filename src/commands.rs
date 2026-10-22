@@ -200,18 +200,12 @@ fn explicit_value(c: &Checkpoint) -> Result<String, &'static str> {
                     o = o.with_area(area_str);
                 }
             }
-            if o.process_id.is_none() && o.area.is_some() {
-                o = o.with_process_id(1);
+            if o.is_complete
+                && let (Some(pid), Some(area)) = (o.process_id, o.area.as_deref())
+            {
+                return Ok(format!("{pid} {} {} {}", o.network, o.wildcard_mask, area));
             }
-            if o.is_complete {
-                let pid = o.process_id.unwrap_or(1);
-                return Ok(format!(
-                    "{pid} {} {} {}",
-                    o.network,
-                    o.wildcard_mask,
-                    o.area.as_deref().unwrap_or("0")
-                ));
-            }
+            return Err("OSPF requires an explicit process ID, network, wildcard and area; no defaults are inferred".into());
         }
         return Ok(c.expected.clone());
     }

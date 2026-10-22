@@ -648,6 +648,9 @@ fn semantic_equal(tag: &str, expected: &str, actual: &str) -> Option<bool> {
         "STATIC_ROUTE" => {
             let exp_route = crate::network_values::ParsedStaticRoute::parse(expected).ok()?;
             let act_route = crate::network_values::ParsedStaticRoute::parse(actual).ok()?;
+            if !exp_route.is_complete || !act_route.is_complete {
+                return None;
+            }
             if exp_route.destination.network != act_route.destination.network
                 || exp_route.destination.prefix != act_route.destination.prefix
             {
@@ -664,16 +667,17 @@ fn semantic_equal(tag: &str, expected: &str, actual: &str) -> Option<bool> {
                     return Some(false);
                 }
             }
-            if let Some(exp_dist) = exp_route.distance {
-                if exp_dist > 1 && act_route.distance != Some(exp_dist) {
-                    return Some(false);
-                }
+            if exp_route.distance.unwrap_or(1) != act_route.distance.unwrap_or(1) {
+                return Some(false);
             }
             Some(true)
         }
         "IPV6_STATIC_ROUTE" => {
             let exp = crate::network_values::ParsedIpv6StaticRoute::parse(expected)?;
             let act = crate::network_values::ParsedIpv6StaticRoute::parse(actual)?;
+            if !exp.is_complete || !act.is_complete {
+                return None;
+            }
             if exp.destination != act.destination || exp.prefix != act.prefix {
                 return Some(false);
             }
@@ -688,16 +692,21 @@ fn semantic_equal(tag: &str, expected: &str, actual: &str) -> Option<bool> {
                     return Some(false);
                 }
             }
-            if let Some(exp_dist) = exp.distance {
-                if exp_dist > 1 && act.distance != Some(exp_dist) {
-                    return Some(false);
-                }
+            if exp.distance.unwrap_or(1) != act.distance.unwrap_or(1) {
+                return Some(false);
             }
             Some(true)
         }
         "OSPF_NETWORK" => {
             let exp = crate::network_values::ParsedOspfNetwork::parse(expected).ok()?;
             let act = crate::network_values::ParsedOspfNetwork::parse(actual).ok()?;
+            if !exp.is_complete
+                || !act.is_complete
+                || exp.process_id.is_none()
+                || act.process_id.is_none()
+            {
+                return None;
+            }
             if exp.network != act.network || exp.wildcard_mask != act.wildcard_mask {
                 return Some(false);
             }
@@ -837,58 +846,47 @@ fn ios_observations(device: &Node, interface: &str, tag: &str) -> Vec<String> {
     }) {
         return Vec::new();
     }
-    if tag == "HOSTNAME" && interface.is_empty() {
-        return lines
-            .iter()
-            .filter_map(|line| line.trim().strip_prefix("hostname ").map(str::trim))
-            .filter(|name| !name.is_empty() && !name.contains(char::is_whitespace))
-            .map(str::to_owned)
-            .collect();
-    }
-    if tag == "STATIC_ROUTE" && interface.is_empty() {
-        return lines
-            .iter()
-            .filter_map(|line| line.trim().strip_prefix("ip route ").map(str::trim))
-            .filter(|r| !r.is_empty())
-            .map(str::to_owned)
-            .collect();
-    }
-    if tag == "IPV6_STATIC_ROUTE" && interface.is_empty() {
-        return lines
-            .iter()
-            .filter_map(|line| line.trim().strip_prefix("ipv6 route ").map(str::trim))
-            .filter(|r| !r.is_empty())
-            .map(str::to_owned)
-            .collect();
-    }
-    if tag == "OSPF_NETWORK" && interface.is_empty() {
-        let mut active_pid: Option<u32> = None;
-        let mut statements = Vec::new();
-        for line in &lines {
-            let trimmed = line.trim();
-            if let Some(rest) = trimmed.strip_prefix("router ospf ") {
-                active_pid = rest
-                    .trim()
-                    .parse::<u32>()
-                    .ok()
-                    .filter(|&p| p > 0 && p < 65535);
-                continue;
-            }
-            if matches!(trimmed, "!" | "exit" | "end")
-                || (!line.starts_with(char::is_whitespace) && !trimmed.is_empty())
-            {
-                active_pid = None;
-            }
-            if let Some(pid) = active_pid {
-                if let Some(rest) = trimmed.strip_prefix("network ") {
-                    let words: Vec<&str> = rest.split_whitespace().collect();
-                    if words.len() == 4 && words[2] == "area" {
-                        statements.push(format!("{pid} {} {} {}", words[0], words[1], words[3]));
+    if interface.is_empty() {
+        let parsed = crate::cisco::parser::parse(&lines.join("\n"));
+        if !parsed.reliable {
+            return Vec::new();
+        }
+        use crate::cisco::ConfigMode;
+        let mut values = Vec::new();
+        for entry in &parsed.entries {
+            let value = match (&entry.mode, tag) {
+                (ConfigMode::Global, "HOSTNAME") => {
+                    entry.text.strip_prefix("hostname ").map(str::to_owned)
+                }
+                (ConfigMode::Global, "STATIC_ROUTE") => {
+                    entry.text.strip_prefix("ip route ").map(str::to_owned)
+                }
+                (ConfigMode::Global, "IPV6_STATIC_ROUTE") => {
+                    entry.text.strip_prefix("ipv6 route ").map(str::to_owned)
+                }
+                (ConfigMode::Router(protocol), "OSPF_NETWORK") => {
+                    if let Some(pid) = protocol
+                        .strip_prefix("ospf ")
+                        .and_then(|v| v.parse::<u16>().ok())
+                        .filter(|v| *v > 0)
+                    {
+                        let words: Vec<_> = entry.text.split_whitespace().collect();
+                        if words.len() == 5 && words[0] == "network" && words[3] == "area" {
+                            Some(format!("{pid} {} {} {}", words[1], words[2], words[4]))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
                     }
                 }
+                _ => None,
+            };
+            if let Some(value) = value {
+                values.push(value);
             }
         }
-        return statements;
+        return values;
     }
     if interface.is_empty() {
         return Vec::new();
@@ -950,16 +948,49 @@ fn ios_observations(device: &Node, interface: &str, tag: &str) -> Vec<String> {
     }
     if sections == 1 { values } else { Vec::new() }
 }
-fn observations(node: &Node, device: &str, interface: &str, tag: &str) -> Vec<String> {
+fn unique_device<'a>(node: &'a Node, name: &str) -> Option<&'a Node> {
     let mut devices = Vec::new();
     descendants(node, "DEVICE", &mut devices);
-    let matching: Vec<_> = devices
-        .into_iter()
-        .filter(|d| {
-            let engine = d.unique_child("ENGINE").unwrap_or(d);
-            engine.unique_value("NAME") == Some(device)
-        })
+    let mut matching = devices.into_iter().filter(|d| {
+        let engines: Vec<_> = d.children.iter().filter(|n| n.tag == "ENGINE").collect();
+        let engine = match engines.as_slice() {
+            [] => *d,
+            [engine] => *engine,
+            _ => return false,
+        };
+        engine.unique_value("NAME") == Some(name)
+    });
+    let first = matching.next()?;
+    if matching.next().is_some() {
+        None
+    } else {
+        Some(first)
+    }
+}
+fn uniquely_owned_config<'a>(node: &'a Node, name: &str) -> Option<Vec<&'a str>> {
+    let device = unique_device(node, name)?;
+    let mut configs = Vec::new();
+    descendants(device, "RUNNINGCONFIG", &mut configs);
+    if configs.len() != 1 {
+        return None;
+    }
+    let lines: Vec<_> = configs[0]
+        .children
+        .iter()
+        .filter(|n| n.tag == "LINE")
+        .map(|n| n.text.as_str())
         .collect();
+    if lines.is_empty()
+        || configs[0].children.iter().any(|n| n.tag != "LINE")
+        || !configs[0].text.trim().is_empty()
+    {
+        None
+    } else {
+        Some(lines)
+    }
+}
+fn observations(node: &Node, device: &str, interface: &str, tag: &str) -> Vec<String> {
+    let matching: Vec<_> = unique_device(node, device).into_iter().collect();
     if matching.len() != 1 {
         return Vec::new();
     }
@@ -1102,10 +1133,16 @@ pub fn compare(activity: &mut Analysis, progress: &Analysis) {
         }
         let values = observations(current[0].0, &check.device, &check.interface, tag);
         if values.is_empty() {
-            if matches!(tag, "STATIC_ROUTE" | "IPV6_STATIC_ROUTE" | "OSPF_NETWORK") {
-                let mut configs = Vec::new();
-                descendants(current[0].0, "RUNNINGCONFIG", &mut configs);
-                if configs.len() == 1 {
+            if matches!(tag, "STATIC_ROUTE" | "IPV6_STATIC_ROUTE" | "OSPF_NETWORK")
+                && semantic_equal(tag, &check.expected, &check.expected).is_some()
+            {
+                if let Some(lines) = uniquely_owned_config(current[0].0, &check.device) {
+                    // Opaque/multiline constructs and commands our parser cannot safely
+                    // scope are not evidence of absence.
+                    let parsed = crate::cisco::parser::parse(&lines.join("\n"));
+                    if !parsed.reliable {
+                        continue;
+                    }
                     check.current = Some("none".into());
                     check.status = Status::Failed;
                     check.explanation = match tag {

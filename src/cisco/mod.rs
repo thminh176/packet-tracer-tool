@@ -138,6 +138,47 @@ pub fn identifier(s: &str) -> bool {
 pub fn safe_text(s: &str) -> bool {
     !s.is_empty() && s.len() <= 512 && s.chars().all(|c| !c.is_control() && !";!|<>".contains(c))
 }
+pub fn valid_parameter(kind: &ParameterKind, value: &str) -> bool {
+    use ParameterKind::*;
+    match kind {
+        Identifier => identifier(value),
+        Interface => parser::interface_name(value).is_some(),
+        Ipv4 => value.parse::<std::net::Ipv4Addr>().is_ok(),
+        Ipv6 => value.parse::<std::net::Ipv6Addr>().is_ok(),
+        Number(min, max) => value
+            .parse::<u32>()
+            .is_ok_and(|n| (*min..=*max).contains(&n)),
+        Choice(choices) => choices.contains(&value),
+        Text => safe_text(value),
+        Ipv4Network => crate::network_values::NormalizedNetwork::parse(value).is_some(),
+        Ipv6Prefix => value.split_once('/').is_some_and(|(ip, p)| {
+            ip.parse::<std::net::Ipv6Addr>().is_ok() && p.parse::<u8>().is_ok_and(|p| p <= 128)
+        }),
+        VlanList => vlan_list(value).is_some(),
+    }
+}
+pub fn vlan_list(value: &str) -> Option<Vec<u16>> {
+    if value.len() > 512 || value.is_empty() {
+        return None;
+    }
+    let mut result = std::collections::BTreeSet::new();
+    for part in value.split(',') {
+        let (start, end) = match part.split_once('-') {
+            Some((a, b)) => (a.parse::<u16>().ok()?, b.parse::<u16>().ok()?),
+            None => {
+                let n = part.parse::<u16>().ok()?;
+                (n, n)
+            }
+        };
+        if start == 0 || end > 4094 || start > end {
+            return None;
+        }
+        for id in start..=end {
+            result.insert(id);
+        }
+    }
+    Some(result.into_iter().collect())
+}
 pub fn generate(req: &CommandRequest) -> CommandPlan {
     let mut p = CommandPlan {
         target: req.device.clone(),
@@ -172,6 +213,22 @@ pub fn generate(req: &CommandRequest) -> CommandPlan {
     }
     if !p.missing_parameters.is_empty() {
         p.classification = Classification::MissingParameters;
+        return p;
+    }
+    for field in &spec.parameters {
+        let value = req.get(field.name);
+        if !value.is_empty() && !valid_parameter(&field.kind, value) {
+            p.warnings
+                .push(format!("Invalid parameter: {}", field.name));
+            return p;
+        }
+    }
+    if let Some(unknown) = req
+        .parameters
+        .keys()
+        .find(|key| !spec.parameters.iter().any(|f| f.name == key.as_str()))
+    {
+        p.warnings.push(format!("Unknown parameter: {unknown}"));
         return p;
     }
     if !safe_text(&req.device)
