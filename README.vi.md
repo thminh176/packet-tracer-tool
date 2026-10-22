@@ -1,4 +1,4 @@
-﻿# Packet Tracer Tool
+# Packet Tracer Tool
 
 [English](README.md) · [Tải bản Windows](https://github.com/thminh176/packet-tracer-tool/releases)
 
@@ -14,8 +14,6 @@ Dự án **không liên kết và không được Cisco bảo trợ**. Cisco và
 - Tạo lệnh IOS khi có đủ dữ liệu cụ thể; hướng dẫn giao diện cho PC/máy chủ.
 - Sao chép lệnh từng tiêu chí/thiết bị; xuất CSV, Markdown và tập lệnh. Đã gộp lệnh IP/mask trùng và tóm tắt mục chưa hỗ trợ.
 - Chuyển Việt/Anh, lưu lựa chọn, thêm ngôn ngữ bằng JSON; đọc nền và cuộn dữ liệu lớn.
-
-![Ứng dụng Windows thật sử dụng dữ liệu tổng hợp tự tạo](docs/images/inspector-windows.png)
 
 ## Cài đặt
 

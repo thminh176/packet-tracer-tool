@@ -1,4 +1,4 @@
-﻿# Packet Tracer Tool
+# Packet Tracer Tool
 
 [Tiếng Việt](README.vi.md) · [Download Windows release](https://github.com/thminh176/packet-tracer-tool/releases) · [Compatibility](docs/COMPATIBILITY.md)
 
@@ -15,12 +15,6 @@ Independent project, **not affiliated with or endorsed by Cisco**. Cisco and Pac
 - Copy individual/device commands; export CSV, Markdown and CLI scripts with source-preserving writes.
 - Switch English/Vietnamese, remember preferences, extend translations using local JSON.
 - Parse in the background; virtualize large checkpoint/XML views.
-
-## Screenshot
-
-The repository screenshot uses only the original synthetic fixture and shows the actual Windows application, not a mockup.
-
-![Actual Windows inspector with original synthetic checkpoints](docs/images/inspector-windows.png)
 
 ## Install and use
 
