@@ -12,6 +12,7 @@ Independent offline Windows x64 Rust / egui companion for Packet Tracer labs. No
 - Mode-aware saved-configuration parsing, explicit scalar switch validators and separate checkpoint command classification / command coverage / automatic verification metrics.
 - Existing read-only PKA/PKT/XML inspection, evidence, manual checklist separation, bilingual preferences and protected reports remain available.
 - Conditional Access/Native/Allowed VLAN assignments and VLAN naming use explicit requirement context; dot1Q uses the explicit VLAN ID, never the subinterface suffix. Current-state verification and strict library prerequisites remain separate.
+- OSPF `RouteN` leaves no longer enter static-route generation or comparison. The table identifies the protocol explicitly; incomplete OSPF requirements can transfer their network/area into the Library for explicit process selection.
 
 ## Evidence and limitations
 

@@ -168,25 +168,52 @@ impl ProtocolBadge {
 
 /// Detect whether a checkpoint represents an IPv4 static route, IPv6 static route, or OSPF network.
 pub fn detect_protocol(c: &Checkpoint) -> Option<ProtocolBadge> {
-    if commands::is_ipv6_static_route_property(&c.property, &c.path)
-        || network_values::ParsedIpv6StaticRoute::parse(&c.expected).is_some()
-    {
+    if commands::is_ospf_network_property(&c.property, &c.path) {
+        return Some(ProtocolBadge::OspfNetwork);
+    }
+    if commands::is_ipv6_static_route_property(&c.property, &c.path) {
         return Some(ProtocolBadge::Ipv6StaticRoute);
     }
 
-    if commands::is_static_route_property(&c.property, &c.path)
-        || network_values::ParsedStaticRoute::parse(&c.expected).is_ok()
-    {
+    if commands::is_static_route_property(&c.property, &c.path) {
         return Some(ProtocolBadge::Ipv4StaticRoute);
     }
 
-    if commands::is_ospf_network_property(&c.property, &c.path)
-        || network_values::ParsedOspfNetwork::parse(&c.expected).is_ok()
-    {
-        return Some(ProtocolBadge::OspfNetwork);
-    }
-
     None
+}
+
+/// Carry explicit OSPF network/area into the library without inventing a process.
+fn ospf_library_request(c: &Checkpoint) -> Option<cisco::CommandRequest> {
+    if !commands::is_ospf_network_property(&c.property, &c.path)
+        || cisco::mapping::identity_conflict(c)
+        || c.evidence.iter().any(|e| {
+            e.starts_with("assessment:unsupported")
+                || e.starts_with("assessment:ambiguous")
+                || e.starts_with("assessment:inventory")
+                || e.starts_with("commands:context-conflict=")
+        })
+        || commands::generate(c)
+            .explanation
+            .to_ascii_lowercase()
+            .contains("conflict")
+    {
+        return None;
+    }
+    let o = network_values::ParsedOspfNetwork::parse(&c.expected).ok()?;
+    let prefix = network_values::wildcard_to_prefix(o.wildcard_mask)?;
+    let mut parameters = BTreeMap::from([("network".into(), format!("{}/{prefix}", o.network))]);
+    if let Some(area) = o.area {
+        parameters.insert("area".into(), area);
+    }
+    if let Some(process) = o.process_id {
+        parameters.insert("process_id".into(), process.to_string());
+    }
+    Some(cisco::CommandRequest {
+        family: "router.ospf.network".into(),
+        device: c.device.clone(),
+        profile: cisco::mapping::profile(c),
+        parameters,
+    })
 }
 
 /// Structured network values extracted from a static route or OSPF statement.
@@ -1893,10 +1920,19 @@ impl InspectorApp {
                                         {
                                             manual = Some((c.id.clone(), checked));
                                         }
+                                        let property_label = detect_protocol(c)
+                                            .map(|badge| {
+                                                format!(
+                                                    "{} {}",
+                                                    tr(badge.catalog_key()),
+                                                    c.property
+                                                )
+                                            })
+                                            .unwrap_or_else(|| c.property.clone());
                                         let values = [
                                             c.device.as_str(),
                                             c.interface.as_str(),
-                                            c.property.as_str(),
+                                            property_label.as_str(),
                                             c.expected.as_str(),
                                             c.current.as_deref().unwrap_or("?"),
                                         ];
@@ -2244,6 +2280,19 @@ impl InspectorApp {
                             ui.monospace(&cmd.text);
                             if ui.button(tr("action.copy_checkpoint")).clicked() {
                                 copy = Some((cmd.text, format!("{} {}", c.device, c.property)));
+                            }
+                        } else if let Some(request) = ospf_library_request(&c) {
+                            ui.label(tr("detail.ospf_process_required"));
+                            if ui.button(tr("detail.open_command_library")).clicked() {
+                                self.library_search_query.clear();
+                                self.library_device_filter = CiscoDeviceFilter::All;
+                                self.library_topic_filter = None;
+                                self.library_selected_id = Some(request.family);
+                                self.library_target_device = request.device;
+                                self.library_profile = request.profile;
+                                self.library_parameters = request.parameters;
+                                self.current_tab = Tab::CommandLibrary;
+                                self.preferences.active_tab = Tab::CommandLibrary;
                             }
                         }
                         let mut manual = self.is_manually_checked(&c.id);
@@ -4303,6 +4352,38 @@ mod rendering_checks {
         };
         assert_eq!(detect_protocol(&cp_ospf), Some(ProtocolBadge::OspfNetwork));
         assert_eq!(ProtocolBadge::OspfNetwork.badge_text(), "[OSPF Network]");
+    }
+
+    #[test]
+    fn indexed_ospf_badges_and_library_parameters_do_not_guess_process() {
+        let c = Checkpoint {
+            device: "Lab-Router".into(),
+            device_type: "Router".into(),
+            property: "Route0".into(),
+            expected: "198.51.100.0 0.0.0.255 2".into(),
+            path: "Network / Lab-Router / OSPF / 20 / Networks / Route0".into(),
+            ..Default::default()
+        };
+        assert_eq!(detect_protocol(&c), Some(ProtocolBadge::OspfNetwork));
+        let detail = extract_network_detail(&c).unwrap();
+        assert_eq!(detail.area.as_deref(), Some("2"));
+        assert_eq!(detail.process_id, None);
+        let mut request = ospf_library_request(&c).unwrap();
+        assert_eq!(request.get("network"), "198.51.100.0/24");
+        assert_eq!(request.get("area"), "2");
+        assert!(request.get("process_id").is_empty());
+        assert!(!cisco::generate(&request).executable());
+        request.parameters.insert("process_id".into(), "7".into());
+        let plan = cisco::generate(&request);
+        assert!(plan.executable());
+        assert!(plan.script().contains("router ospf 7\n"));
+        assert!(!plan.script().contains("ip route"));
+        let mut unrelated = c.clone();
+        unrelated.property = "IP Address".into();
+        unrelated.path = "Network / Lab-Router / Ports / GigabitEthernet0/0".into();
+        assert_eq!(detect_protocol(&unrelated), None);
+        assert!(ospf_library_request(&unrelated).is_none());
+        assert_eq!(c.status, Status::Unverified);
     }
 
     #[test]

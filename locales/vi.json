@@ -297,6 +297,9 @@
                      "cisco.class.ready":  "Đã có lệnh/hướng dẫn; kết quả đối chiếu tính riêng",
                      "cisco.class.unsupported":  "Đã nhận diện: chưa hỗ trợ ngữ cảnh hoặc quy trình này",
                      "cisco.class.unknown":  "Yêu cầu chưa rõ hoặc có dữ liệu mâu thuẫn",
-                     "cisco.class.missing":  "Đã nhận diện: còn thiếu tham số"
+                     "cisco.class.missing":  "Đã nhận diện: còn thiếu tham số",
+                     "detail.ospf_process_required": "OSPF dùng router ospf và network ... area ..., không phải ip route. Hãy nhập process ID rõ ràng trong Thư viện lệnh; số trong cây tiêu chí chưa phải bằng chứng xác minh process ID.",
+                     "detail.open_command_library": "Bổ sung tham số trong Thư viện lệnh",
+                     "explanation.ospf_required": "OSPF cần process ID, mạng, wildcard và area rõ ràng; ứng dụng không tự suy diễn giá trị mặc định"
                  }
 }

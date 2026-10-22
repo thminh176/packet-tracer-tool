@@ -19,6 +19,7 @@ docs/PT_COMMAND_COMPATIBILITY_MATRIX.md
 docs/CISCO_SWITCH_RESEARCH.md
 docs/CISCO_ROUTER_RESEARCH.md
 docs/REAL_FILE_REVIEW.md
+docs/ROUTING_CLASSIFICATION_FIX.md
 docs/images/cisco-library-windows.png
 locales/en.json
 locales/vi.json

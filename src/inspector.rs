@@ -1284,10 +1284,24 @@ pub fn compare(activity: &mut Analysis, progress: &Analysis) {
         {
             continue;
         }
+        // Use the same explicit sibling evidence as generation. A raw OSPF RouteN
+        // leaf may omit process metadata; never compare it as a static route or
+        // silently ignore its explicit process requirement.
+        let expected = if matches!(tag, "STATIC_ROUTE" | "IPV6_STATIC_ROUTE" | "OSPF_NETWORK") {
+            match crate::commands::explicit_value(check) {
+                Ok(value) => value,
+                Err(reason) => {
+                    check.explanation = reason.into();
+                    continue;
+                }
+            }
+        } else {
+            check.expected.clone()
+        };
         let values = observations(current[0].0, &check.device, &check.interface, tag);
         if values.is_empty() {
             if matches!(tag, "STATIC_ROUTE" | "IPV6_STATIC_ROUTE" | "OSPF_NETWORK")
-                && semantic_equal(tag, &check.expected, &check.expected).is_some()
+                && semantic_equal(tag, &expected, &expected).is_some()
             {
                 if let Some(lines) = uniquely_owned_config(current[0].0, &check.device) {
                     // Opaque/multiline constructs and commands our parser cannot safely
@@ -1332,7 +1346,7 @@ pub fn compare(activity: &mut Analysis, progress: &Analysis) {
         );
         let comparisons: Option<Vec<bool>> = values
             .iter()
-            .map(|actual| semantic_equal(tag, check.expected.trim(), actual))
+            .map(|actual| semantic_equal(tag, expected.trim(), actual))
             .collect();
         let Some(comparisons) = comparisons else {
             if tag == "STATIC_ROUTE" {

@@ -145,28 +145,48 @@ pub fn is_static_route_property(property: &str, path: &str) -> bool {
     let p = key(property);
     let path_k = key(path);
     (p.contains("staticroute")
-        || p.starts_with("route")
+        || indexed_route(&p)
         || p.ends_with("staticroutesv2")
         || path_k.contains("staticroutes")
         || path_k.contains("staticroute"))
         && !path_k.contains("routesv6")
         && !p.contains("ipv6")
+        && dynamic_routing_branch(path).is_none()
 }
 
 pub fn is_ipv6_static_route_property(property: &str, path: &str) -> bool {
     let p = key(property);
     let path_k = key(path);
-    p.contains("ipv6staticroute")
-        || (path_k.contains("routesv6") && (p.starts_with("route") || p.starts_with("staticroute")))
-        || (p.contains("route") && (p.contains("v6") || path_k.contains("v6")))
+    dynamic_routing_branch(path).is_none()
+        && (p.contains("ipv6staticroute")
+            || (path_k.contains("routesv6") && (indexed_route(&p) || p.starts_with("staticroute")))
+            || (p.contains("route") && (p.contains("v6") || path_k.contains("v6"))))
+}
+
+fn indexed_route(property: &str) -> bool {
+    property
+        .strip_prefix("route")
+        .is_some_and(|suffix| suffix.is_empty() || suffix.bytes().all(|b| b.is_ascii_digit()))
+}
+
+// Only protocol branch labels count; a device called OSPF-Router is not a protocol.
+fn dynamic_routing_branch(path: &str) -> Option<&'static str> {
+    path.split('/').find_map(|part| match key(part).as_str() {
+        "ospf" | "ospfv2" => Some("ospf"),
+        "ospfv3" => Some("ospfv3"),
+        "eigrp" | "eigrpv6" => Some("eigrp"),
+        "rip" | "ripv2" | "ripng" => Some("rip"),
+        "bgp" => Some("bgp"),
+        _ => None,
+    })
 }
 
 pub fn is_ospf_network_property(property: &str, path: &str) -> bool {
     let p = key(property);
-    let path_k = key(path);
-    p.contains("ospfnetwork")
-        || (path_k.contains("ospf")
-            && (p.contains("network") || p.contains("route") || p.contains("address")))
+    dynamic_routing_branch(path) != Some("ospfv3")
+        && (p.contains("ospfnetwork")
+            || (dynamic_routing_branch(path) == Some("ospf")
+                && (p.contains("network") || indexed_route(&p))))
 }
 
 // The inspector may attach a uniquely matched explicit sibling requirement.

@@ -297,6 +297,9 @@
                      "cisco.class.ready":  "Command/instructions ready; verification is separate",
                      "cisco.class.unsupported":  "Recognized requirement: unsupported context or workflow",
                      "cisco.class.unknown":  "Unknown or ambiguous requirement",
-                     "cisco.class.missing":  "Recognized requirement: missing parameters"
+                     "cisco.class.missing":  "Recognized requirement: missing parameters",
+                     "detail.ospf_process_required": "OSPF uses router ospf and network ... area ..., not ip route. Supply an explicit process ID in the Command Library; numeric tree labels are not verified process evidence.",
+                     "detail.open_command_library": "Complete parameters in Command Library",
+                     "explanation.ospf_required": "OSPF requires an explicit process ID, network, wildcard and area; no defaults are inferred"
                  }
 }
