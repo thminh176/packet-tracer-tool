@@ -191,7 +191,11 @@ fn supported_families_have_scoped_commands() {
             "100 192.0.2.0 0.0.0.255",
             "router eigrp 100\nnetwork 192.0.2.0 0.0.0.255\nexit",
         ),
-        ("Enable Secret", "test-secret", "enable secret test-secret"),
+        (
+            "Enable Secret",
+            "test-secret",
+            "enable secret 0 test-secret",
+        ),
         (
             "Password Encryption",
             "enabled",
@@ -215,10 +219,18 @@ fn supported_families_have_scoped_commands() {
         (
             "Local User",
             "admin 15 test-secret",
-            "username admin privilege 15 secret test-secret",
+            "username admin privilege 15 secret 0 test-secret",
         ),
     ] {
-        let result = generate(&checkpoint(property, value));
+        let mut requirement = checkpoint(property, value);
+        if property == "VTY SSH" {
+            requirement.evidence.extend([
+                "commands:parameter:local_user_present=yes".into(),
+                "commands:parameter:ssh_enabled=yes".into(),
+                "commands:parameter:aaa_mode=disabled".into(),
+            ]);
+        }
+        let result = generate(&requirement);
         assert!(result.supported, "{property}: {}", result.explanation);
         assert!(!result.gui);
         assert!(result.text.starts_with("enable\nconfigure terminal\n"));

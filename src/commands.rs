@@ -172,6 +172,31 @@ pub(crate) fn explicit_value(c: &Checkpoint) -> Result<String, &'static str> {
     let property = key(&c.property);
     if is_static_route_property(&c.property, &c.path) {
         if let Ok(mut r) = crate::network_values::ParsedStaticRoute::parse(&c.expected) {
+            let targets: std::collections::BTreeSet<_> = c
+                .evidence
+                .iter()
+                .filter_map(|e| e.strip_prefix("commands:route-next-hop="))
+                .collect();
+            if targets.len() > 1 {
+                return Err("Conflicting explicit route forwarding targets");
+            }
+            if r.is_complete
+                && let Some(target) = targets.first()
+            {
+                let matches = target
+                    .parse::<Ipv4Addr>()
+                    .ok()
+                    .is_some_and(|ip| r.next_hop == Some(ip))
+                    || crate::cisco::parser::interface_name(target).is_some_and(|interface| {
+                        r.exit_interface
+                            .as_deref()
+                            .and_then(crate::cisco::parser::interface_name)
+                            == Some(interface)
+                    });
+                if !matches {
+                    return Err("Route requirement conflicts with explicit forwarding target");
+                }
+            }
             if !r.is_complete {
                 let targets: std::collections::BTreeSet<_> = c
                     .evidence
@@ -256,6 +281,13 @@ pub(crate) fn explicit_value(c: &Checkpoint) -> Result<String, &'static str> {
             {
                 if prefix <= 32 {
                     if let Some(mask) = crate::network_values::prefix_to_subnet(prefix) {
+                        if c.evidence
+                            .iter()
+                            .filter_map(|e| e.strip_prefix("commands:ipv4-mask="))
+                            .any(|extra| extra.parse::<Ipv4Addr>().ok() != Some(mask))
+                        {
+                            return Err("IP prefix conflicts with explicit sibling subnet mask");
+                        }
                         return Ok(format!("{ip_addr} {mask}"));
                     }
                 }
@@ -599,7 +631,7 @@ fn plan(c: &Checkpoint) -> Result<Plan, &'static str> {
             out.context.push(format!("router eigrp {}", t[0]));
             format!("network {} {}", t[1], t[2])
         }
-        "enablesecret" if token(value) => format!("enable secret {value}"),
+        "enablesecret" if token(value) => format!("enable secret 0 {value}"),
         "passwordencryption" if enabled(value) == Some(true) => {
             "service password-encryption".into()
         }
@@ -630,7 +662,7 @@ fn plan(c: &Checkpoint) -> Result<Plan, &'static str> {
             "transport input ssh".into()
         }
         "localuser" if t.len() == 3 && identifier(t[0]) && number(t[1], 0, 15) && token(t[2]) => {
-            format!("username {} privilege {} secret {}", t[0], t[1], t[2])
+            format!("username {} privilege {} secret 0 {}", t[0], t[1], t[2])
         }
         "save" | "saveconfiguration" if enabled(value) == Some(true) => {
             out.save = true;
@@ -670,6 +702,9 @@ pub fn generate(checkpoint: &Checkpoint) -> Command {
         Ok(v) => v,
         Err(e) => return unsupported(e),
     };
+    if crate::cisco::mapping::parameter_conflict(checkpoint, &resolved) {
+        return unsupported("Conflicting explicit named parameter evidence; inspect requirements");
+    }
     if !is_gui(checkpoint)
         && let Some(req) = crate::cisco::mapping::request(checkpoint, &resolved)
         && crate::cisco::catalog().iter().any(|s| s.id == req.family)
@@ -819,6 +854,16 @@ fn interface_order(p: &Plan) -> u8 {
 }
 
 fn conflict_key(c: &Checkpoint, p: &Plan) -> Option<String> {
+    let mut canonical = p.clone();
+    for context in &mut canonical.context {
+        if let Some(interface) = context
+            .strip_prefix("interface ")
+            .and_then(crate::cisco::parser::interface_name)
+        {
+            *context = format!("interface {interface}");
+        }
+    }
+    let p = &canonical;
     // Equal destinations with distinct forwarding targets/distances are valid
     // ECMP or floating static routes, not mutually exclusive scalar settings.
     if is_static_route_property(&c.property, &c.path)
@@ -890,6 +935,8 @@ fn conflict_key(c: &Checkpoint, p: &Plan) -> Option<String> {
             property = "ipv4address".into()
         }
         "gateway" | "defaultgateway" => property = "gateway".into(),
+        "description" | "interfacedescription" => property = "description".into(),
+        "hostname" | "host name" => property = "hostname".into(),
         _ => (),
     }
     if property == "localuser" {

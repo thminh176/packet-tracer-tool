@@ -72,6 +72,13 @@ pub fn request(c: &Checkpoint, resolved: &str) -> Option<CommandRequest> {
             put("message", resolved);
             "basic.banner_motd"
         }
+        "vtyssh" => {
+            if t.len() == 2 {
+                put("first", t[0]);
+                put("last", t[1]);
+            }
+            "basic.vty_ssh"
+        }
         "save" | "saveconfiguration" if matches!(resolved, "true" | "yes" | "startup") => {
             "basic.save"
         }
@@ -215,6 +222,29 @@ pub fn request(c: &Checkpoint, resolved: &str) -> Option<CommandRequest> {
         }
     }
     Some(req)
+}
+/// Repeated or contradictory named evidence must not disappear during completion.
+pub fn parameter_conflict(c: &Checkpoint, resolved: &str) -> bool {
+    let Some(req) = request(c, resolved) else {
+        return false;
+    };
+    let Some(spec) = super::catalog().iter().find(|s| s.id == req.family) else {
+        return false;
+    };
+    spec.parameters.iter().any(|field| {
+        let prefix = format!("commands:parameter:{}=", field.name);
+        let values: std::collections::BTreeSet<_> = c
+            .evidence
+            .iter()
+            .filter_map(|s| s.strip_prefix(&prefix))
+            .collect();
+        values.len() > 1
+            || values.first().is_some_and(|value| {
+                req.parameters
+                    .get(field.name)
+                    .is_some_and(|required| required.as_str() != *value)
+            })
+    })
 }
 #[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckpointCoverage {

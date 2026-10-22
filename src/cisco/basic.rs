@@ -53,7 +53,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "basic.enable_secret",
             "Privileged EXEC secret",
             "Mật khẩu đặc quyền",
-            "enable secret <secret>",
+            "enable secret 0 <secret>",
             "global",
             vec![field("secret", Identifier, "ExampleOnly123")],
             SECURITY,
@@ -73,7 +73,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "basic.local_user",
             "Local login user",
             "Người dùng cục bộ",
-            "username <username> privilege <privilege> secret <secret>",
+            "username <username> privilege <privilege> secret 0 <secret>",
             "global",
             vec![
                 field("username", Identifier, "labuser"),
@@ -138,6 +138,10 @@ pub fn generate(req: &CommandRequest) -> Result<Vec<ModeCommand>, String> {
             let name = req.required("hostname")?;
             if name.len() > 63
                 || !name.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+                || !name
+                    .chars()
+                    .last()
+                    .is_some_and(|c| c.is_ascii_alphanumeric())
                 || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
             {
                 return Err(
@@ -149,7 +153,9 @@ pub fn generate(req: &CommandRequest) -> Result<Vec<ModeCommand>, String> {
         }
         "basic.enable_secret" => vec![at(
             Global,
-            format!("enable secret {}", credential(req.required("secret")?)?),
+            // Explicit plaintext type prevents a numeric/keyword credential from
+            // being parsed as IOS's encryption-type or level option.
+            format!("enable secret 0 {}", credential(req.required("secret")?)?),
         )],
         "basic.password_encryption" => vec![at(Global, "service password-encryption")],
         "basic.local_user" => {
@@ -164,7 +170,7 @@ pub fn generate(req: &CommandRequest) -> Result<Vec<ModeCommand>, String> {
             vec![at(
                 Global,
                 format!(
-                    "username {user} privilege {privilege} secret {}",
+                    "username {user} privilege {privilege} secret 0 {}",
                     credential(req.required("secret")?)?
                 ),
             )]
@@ -246,6 +252,23 @@ fn credential(s: &str) -> Result<&str, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn plaintext_secret_tokens_are_not_ios_options() {
+        for secret in ["5", "9", "level", "Example123"] {
+            let req = CommandRequest {
+                family: "basic.enable_secret".into(),
+                device: "Lab".into(),
+                parameters: [("secret".into(), secret.into())].into(),
+                ..Default::default()
+            };
+            let plan = super::super::generate(&req);
+            assert!(plan.executable());
+            assert!(
+                plan.script()
+                    .contains(&format!("enable secret 0 {secret}\n"))
+            );
+        }
+    }
     #[test]
     fn examples_and_injection_are_checked() {
         for spec in specs() {
