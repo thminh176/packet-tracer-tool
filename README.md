@@ -35,3 +35,9 @@ Read-only command-line probe:
 ```powershell
 cargo run --release --example inspect -- "C:\path\activity.pka" "C:\path\saved.pkt"
 ```
+
+## Ngôn ngữ / Languages
+
+Ứng dụng hỗ trợ Tiếng Việt và English. Chọn ngôn ngữ trên thanh công cụ; lựa chọn được lưu. Để thêm ngôn ngữ, sao chép `locales/en.json`, dịch phần `messages`, đổi `locale` và `name`, rồi đặt tệp trong thư mục `locales` cạnh EXE. Có thể bấm tải lại ngôn ngữ; không cần sửa mã Rust hoặc biên dịch lại. Xem [hướng dẫn ngôn ngữ](docs/LOCALIZATION.md).
+
+The portable local package is produced by `scripts/build-release.ps1`. It includes the EXE, external language catalogs, documentation, SHA-256 checksum and available third-party license texts. The GitHub Actions workflow checks and packages Windows artifacts without publishing a release.

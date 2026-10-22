@@ -146,6 +146,8 @@ pub struct InspectorApp {
 
     // Raw XML search
     pub xml_search_query: String,
+    xml_chunks: Vec<(usize, usize)>,
+    xml_cache_identity: (usize, usize),
 
     // Status / feedback
     pub is_loading: bool,
@@ -184,6 +186,8 @@ impl InspectorApp {
 
             command_device_filter: None,
             xml_search_query: String::new(),
+            xml_chunks: Vec::new(),
+            xml_cache_identity: (0, 0),
 
             is_loading: false,
             loading_description: None,
@@ -200,18 +204,17 @@ impl InspectorApp {
         // Load persisted state if available
         if let Some(ctx_ref) = cc {
             if let Some(storage) = ctx_ref.storage {
-                if let Some(prefs_str) = storage.get_string("preferences") {
-                    if let Ok(prefs) = serde_json::from_str::<Preferences>(&prefs_str) {
-                        app.preferences = prefs;
-                        app.current_tab = app.preferences.active_tab;
-                    }
+                if let Some(prefs_str) = storage.get_string("preferences")
+                    && let Ok(prefs) = serde_json::from_str::<Preferences>(&prefs_str)
+                {
+                    app.preferences = prefs;
+                    app.current_tab = app.preferences.active_tab;
                 }
-                if let Some(checklists_str) = storage.get_string("manual_checklists") {
-                    if let Ok(checklists) =
+                if let Some(checklists_str) = storage.get_string("manual_checklists")
+                    && let Ok(checklists) =
                         serde_json::from_str::<HashMap<String, ActivityChecklist>>(&checklists_str)
-                    {
-                        app.manual_checklists = checklists;
-                    }
+                {
+                    app.manual_checklists = checklists;
                 }
             }
 
@@ -219,6 +222,28 @@ impl InspectorApp {
             let mut visuals = egui::Visuals::dark();
             visuals.window_corner_radius = egui::CornerRadius::same(6);
             ctx_ref.egui_ctx.set_visuals(visuals);
+            // Use the Windows system font for complete Vietnamese glyphs.
+            // It is read from the OS, never copied into the distribution.
+            if let Some(windows) = std::env::var_os("WINDIR")
+                && let Ok(bytes) = std::fs::read(PathBuf::from(windows).join("Fonts/segoeui.ttf"))
+            {
+                let mut fonts = egui::FontDefinitions::default();
+                fonts.font_data.insert(
+                    "system-ui".into(),
+                    Arc::new(egui::FontData::from_owned(bytes)),
+                );
+                fonts
+                    .families
+                    .entry(egui::FontFamily::Proportional)
+                    .or_default()
+                    .insert(0, "system-ui".into());
+                fonts
+                    .families
+                    .entry(egui::FontFamily::Monospace)
+                    .or_default()
+                    .push("system-ui".into());
+                ctx_ref.egui_ctx.set_fonts(fonts);
+            }
         }
 
         app.set_status(
@@ -407,7 +432,7 @@ impl InspectorApp {
                     }
                     Err(error) => self.set_status(tf(
                         "ui.failed_to_load_activity_error",
-                        &[("error", &format!("{}", error))],
+                        &[("error", &error.to_string())],
                     )),
                 },
                 LoadMessage::ProgressLoaded { path, result, .. } => match result {
@@ -426,7 +451,7 @@ impl InspectorApp {
                     }
                     Err(error) => self.set_status(tf(
                         "ui.failed_to_load_progress_error",
-                        &[("error", &format!("{}", error))],
+                        &[("error", &error.to_string())],
                     )),
                 },
             }
@@ -531,17 +556,17 @@ impl InspectorApp {
                 }
 
                 // Device filter
-                if let Some(ref dev) = self.selected_device {
-                    if &c.device != dev {
-                        return false;
-                    }
+                if let Some(ref dev) = self.selected_device
+                    && &c.device != dev
+                {
+                    return false;
                 }
 
                 // Category filter
-                if let Some(ref cat) = self.selected_category {
-                    if &c.category != cat {
-                        return false;
-                    }
+                if let Some(ref cat) = self.selected_category
+                    && &c.category != cat
+                {
+                    return false;
                 }
 
                 // Manual unchecked filter
@@ -607,27 +632,26 @@ impl InspectorApp {
             let shift = i.modifiers.shift;
 
             // Ctrl+O: Open Activity
-            if ctrl && !shift && i.key_pressed(egui::Key::O) {
-                if let Some(path) = rfd::FileDialog::new()
+            if ctrl
+                && !shift
+                && i.key_pressed(egui::Key::O)
+                && let Some(path) = rfd::FileDialog::new()
                     .add_filter(tr("ui.packet_tracer_pka_pkt"), &["pka", "pkt"])
                     .add_filter(tr("ui.all_files"), &["*"])
                     .pick_file()
-                {
-                    self.load_activity_background(path, Some(ctx.clone()));
-                }
+            {
+                self.load_activity_background(path, Some(ctx.clone()));
             }
 
             // Ctrl+P or Ctrl+Shift+O: Open Progress
-            if (ctrl && i.key_pressed(egui::Key::P))
-                || (ctrl && shift && i.key_pressed(egui::Key::O))
-            {
-                if let Some(path) = rfd::FileDialog::new()
+            if ((ctrl && i.key_pressed(egui::Key::P))
+                || (ctrl && shift && i.key_pressed(egui::Key::O)))
+                && let Some(path) = rfd::FileDialog::new()
                     .add_filter(tr("ui.packet_tracer_pka_pkt"), &["pka", "pkt"])
                     .add_filter(tr("ui.all_files"), &["*"])
                     .pick_file()
-                {
-                    self.load_progress_background(path, Some(ctx.clone()));
-                }
+            {
+                self.load_progress_background(path, Some(ctx.clone()));
             }
 
             // Ctrl+R: Reload Activity
@@ -705,14 +729,13 @@ impl InspectorApp {
                     ui.separator();
 
                     // Open Activity button
-                    if ui.button(tr("menu.open_file")).clicked() {
-                        if let Some(path) = rfd::FileDialog::new()
+                    if ui.button(tr("menu.open_file")).clicked()
+                        && let Some(path) = rfd::FileDialog::new()
                             .add_filter(tr("ui.packet_tracer_pka_pkt"), &["pka", "pkt"])
                             .add_filter(tr("ui.all_files"), &["*"])
                             .pick_file()
-                        {
-                            self.load_activity_background(path, Some(ctx.clone()));
-                        }
+                    {
+                        self.load_activity_background(path, Some(ctx.clone()));
                     }
 
                     // Reload button
@@ -734,21 +757,19 @@ impl InspectorApp {
                             egui::Button::new(tr("menu.open_progress")),
                         )
                         .clicked()
-                    {
-                        if let Some(path) = rfd::FileDialog::new()
+                        && let Some(path) = rfd::FileDialog::new()
                             .add_filter(tr("ui.packet_tracer_pka_pkt"), &["pka", "pkt"])
                             .add_filter(tr("ui.all_files"), &["*"])
                             .pick_file()
-                        {
-                            self.load_progress_background(path, Some(ctx.clone()));
-                        }
+                    {
+                        self.load_progress_background(path, Some(ctx.clone()));
                     }
 
                     // Clear progress button
-                    if self.progress_analysis.is_some() {
-                        if ui.button(tr("ui.clear_progress")).clicked() {
-                            self.clear_progress();
-                        }
+                    if self.progress_analysis.is_some()
+                        && ui.button(tr("ui.clear_progress")).clicked()
+                    {
+                        self.clear_progress();
                     }
 
                     ui.separator();
@@ -758,33 +779,32 @@ impl InspectorApp {
                     if ui
                         .add_enabled(export_enabled, egui::Button::new(tr("menu.export_csv")))
                         .clicked()
+                        && let Some(ref a) = self.analysis
                     {
-                        if let Some(ref a) = self.analysis {
-                            match reports::csv(a) {
-                                Ok(data) => {
-                                    if let Some(path) = rfd::FileDialog::new()
-                                        .add_filter(tr("ui.csv_csv"), &["csv"])
-                                        .set_file_name("activity_report.csv")
-                                        .save_file()
-                                    {
-                                        if let Err(e) = self.export_data(&path, data) {
-                                            self.set_status(tf(
-                                                "ui.error_saving_csv_e",
-                                                &[("e", &format!("{}", e))],
-                                            ));
-                                        } else {
-                                            self.set_status(tf(
-                                                "ui.saved_csv_to_value",
-                                                &[("value", &format!("{}", path.display()))],
-                                            ));
-                                        }
+                        match reports::csv(a) {
+                            Ok(data) => {
+                                if let Some(path) = rfd::FileDialog::new()
+                                    .add_filter(tr("ui.csv_csv"), &["csv"])
+                                    .set_file_name("activity_report.csv")
+                                    .save_file()
+                                {
+                                    if let Err(e) = self.export_data(&path, data) {
+                                        self.set_status(tf(
+                                            "ui.error_saving_csv_e",
+                                            &[("e", &format!("{}", e))],
+                                        ));
+                                    } else {
+                                        self.set_status(tf(
+                                            "ui.saved_csv_to_value",
+                                            &[("value", &format!("{}", path.display()))],
+                                        ));
                                     }
                                 }
-                                Err(e) => self.set_status(tf(
-                                    "ui.failed_to_generate_csv_e",
-                                    &[("e", &format!("{}", e))],
-                                )),
                             }
+                            Err(e) => self.set_status(tf(
+                                "ui.failed_to_generate_csv_e",
+                                &[("e", &format!("{}", e))],
+                            )),
                         }
                     }
 
@@ -795,25 +815,24 @@ impl InspectorApp {
                             egui::Button::new(tr("menu.export_markdown")),
                         )
                         .clicked()
+                        && let Some(ref a) = self.analysis
                     {
-                        if let Some(ref a) = self.analysis {
-                            let data = reports::markdown(a);
-                            if let Some(path) = rfd::FileDialog::new()
-                                .add_filter(tr("ui.markdown_md"), &["md"])
-                                .set_file_name("activity_report.md")
-                                .save_file()
-                            {
-                                if let Err(e) = self.export_data(&path, data) {
-                                    self.set_status(tf(
-                                        "ui.error_saving_markdown_e",
-                                        &[("e", &format!("{}", e))],
-                                    ));
-                                } else {
-                                    self.set_status(tf(
-                                        "ui.saved_markdown_to_value",
-                                        &[("value", &format!("{}", path.display()))],
-                                    ));
-                                }
+                        let data = reports::markdown(a);
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter(tr("ui.markdown_md"), &["md"])
+                            .set_file_name("activity_report.md")
+                            .save_file()
+                        {
+                            if let Err(e) = self.export_data(&path, data) {
+                                self.set_status(tf(
+                                    "ui.error_saving_markdown_e",
+                                    &[("e", &format!("{}", e))],
+                                ));
+                            } else {
+                                self.set_status(tf(
+                                    "ui.saved_markdown_to_value",
+                                    &[("value", &format!("{}", path.display()))],
+                                ));
                             }
                         }
                     }
@@ -822,31 +841,32 @@ impl InspectorApp {
                     if ui
                         .add_enabled(export_enabled, egui::Button::new(tr("menu.export_cli")))
                         .clicked()
+                        && let Some(ref a) = self.analysis
                     {
-                        if let Some(ref a) = self.analysis {
-                            let script = commands::device_script(&a.checkpoints, None);
-                            if let Some(path) = rfd::FileDialog::new()
-                                .add_filter(tr("ui.cli_script_txt_ios"), &["txt", "ios", "cli"])
-                                .set_file_name("device_commands.txt")
-                                .save_file()
-                            {
-                                if let Err(e) = self.export_data(&path, script) {
-                                    self.set_status(tf(
-                                        "ui.error_saving_cli_script_e",
-                                        &[("e", &format!("{}", e))],
-                                    ));
-                                } else {
-                                    self.set_status(tf(
-                                        "ui.saved_cli_script_to_value",
-                                        &[("value", &format!("{}", path.display()))],
-                                    ));
-                                }
+                        let script = commands::device_script(&a.checkpoints, None);
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter(tr("ui.cli_script_txt_ios"), &["txt", "ios", "cli"])
+                            .set_file_name("device_commands.txt")
+                            .save_file()
+                        {
+                            if let Err(e) = self.export_data(&path, script) {
+                                self.set_status(tf(
+                                    "ui.error_saving_cli_script_e",
+                                    &[("e", &format!("{}", e))],
+                                ));
+                            } else {
+                                self.set_status(tf(
+                                    "ui.saved_cli_script_to_value",
+                                    &[("value", &format!("{}", path.display()))],
+                                ));
                             }
                         }
                     }
-
-                    // Right-side summary metrics
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                });
+                ui.separator();
+                ui.horizontal_wrapped(|ui| {
+                    // Summary has its own row, including at narrow window sizes.
+                    ui.horizontal_wrapped(|ui| {
                         if let Some(ref a) = self.analysis {
                             let s = a.summary();
                             ui.label(tf(
@@ -1162,7 +1182,7 @@ impl InspectorApp {
         let tr = |key: &str| catalog.text(&language, key);
         egui::CentralPanel::default().show(ctx, |ui| {
             // Tab bar
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 for tab in Tab::ALL {
                     let is_active = self.current_tab == tab;
                     let text = format!("{} ({})", tr(tab.title()), tab.shortcut());
@@ -1182,14 +1202,13 @@ impl InspectorApp {
                     ui.add_space(8.0);
                     ui.label(tr("empty.description"));
                     ui.add_space(16.0);
-                    if ui.button(tr("menu.open_file")).clicked() {
-                        if let Some(path) = rfd::FileDialog::new()
+                    if ui.button(tr("menu.open_file")).clicked()
+                        && let Some(path) = rfd::FileDialog::new()
                             .add_filter(tr("ui.packet_tracer_pka_pkt"), &["pka", "pkt"])
                             .add_filter(tr("ui.all_files"), &["*"])
                             .pick_file()
-                        {
-                            self.load_activity_background(path, Some(ctx.clone()));
-                        }
+                    {
+                        self.load_activity_background(path, Some(ctx.clone()));
                     }
                 });
                 return;
@@ -1381,8 +1400,8 @@ impl InspectorApp {
                         ui.label(tf(
                             "ui.value_s_value2_ms",
                             &[
-                                ("value", &format!("{:.3}", duration)),
-                                ("value2", &format!("{:.1}", duration * 1000.0)),
+                                ("value", &format!("{:.3}", duration / 1000.0)),
+                                ("value2", &format!("{:.1}", *duration)),
                             ],
                         ));
                         ui.end_row();
@@ -1396,261 +1415,222 @@ impl InspectorApp {
         }
     }
 
-    /// Tab 2: Checkpoints with virtualized row rendering
+    /// Virtualized checkpoint table. Selection is rendered in the detail panel.
     pub fn render_checkpoints_tab(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let catalog = self.localizer.clone();
-        let language = self.preferences.language.clone();
-        let tr = |key: &str| catalog.text(&language, key);
-        let tf = |key: &str, values: &[(&str, &str)]| catalog.format(&language, key, values);
-        let filtered_indices = self.filtered_checkpoint_indices();
-        let total_filtered = filtered_indices.len();
-        let compact = self.preferences.compact_view;
-
-        let mut copy_filtered_csv = false;
-        let mut toggle_check: Option<(String, bool)> = None;
-        let mut toggle_expand: Option<String> = None;
-        let mut to_copy: Option<(String, &'static str)> = None;
-
+        let lang = self.preferences.language.clone();
+        let tr = |key: &str| catalog.text(&lang, key);
+        let indices = self.filtered_checkpoint_indices();
+        let mut selected = None;
+        let mut manual = None;
+        let mut copied = None;
         ui.horizontal(|ui| {
-            ui.label(tf(
+            ui.label(catalog.format(
+                &lang,
                 "ui.total_filtered_checkpoints_matching_filters",
-                &[("total_filtered", &format!("{}", total_filtered))],
+                &[("total_filtered", &indices.len().to_string())],
             ));
-            if ui.button(tr("ui.copy_csv_of_filtered")).clicked() {
-                copy_filtered_csv = true;
-            }
-        });
-        ui.add_space(4.0);
-
-        if copy_filtered_csv {
-            if let Some(ref a) = self.analysis {
-                let sub_analysis = Analysis {
-                    checkpoints: filtered_indices
-                        .iter()
-                        .map(|&i| a.checkpoints[i].clone())
-                        .collect(),
-                    diagnostics: Vec::new(),
-                    xml: String::new(),
-                    timings: Vec::new(),
+            if ui.button(tr("ui.copy_csv_of_filtered")).clicked()
+                && let Some(a) = &self.analysis
+            {
+                let subset = Analysis {
+                    checkpoints: indices.iter().map(|i| a.checkpoints[*i].clone()).collect(),
+                    ..Default::default()
                 };
-                if let Ok(csv_text) = reports::csv(&sub_analysis) {
-                    to_copy = Some((csv_text, ""));
+                if let Ok(csv) = reports::csv(&subset) {
+                    copied = Some(csv);
                 }
             }
-        }
-
-        // Virtualized scroll area
-        let row_height = if compact { 44.0 } else { 74.0 };
-
-        if let Some(ref a) = self.analysis {
-            let checklist = self.current_checklist();
-            egui::ScrollArea::vertical()
-                .auto_shrink([false; 2])
-                .show_rows(ui, row_height, total_filtered, |ui, row_range| {
-                    for &idx in &filtered_indices[row_range] {
-                        let c = &a.checkpoints[idx];
-                        let is_expanded = self
-                            .expanded_checkpoint_ids
-                            .get(&c.id)
-                            .copied()
-                            .unwrap_or(false);
-                        let mut is_checked = checklist
-                            .checked_checkpoints
-                            .get(&c.id)
-                            .copied()
-                            .unwrap_or(false);
-
-                        egui::Frame::group(ui.style())
-                            .inner_margin(egui::Margin::symmetric(10, 6))
-                            .show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    // Manual checklist checkbox
-                                    if ui.checkbox(&mut is_checked, "").changed() {
-                                        toggle_check = Some((c.id.clone(), is_checked));
-                                    }
-
-                                    // Status pill
-                                    let (status_text, status_color) = match c.status {
-                                        Status::Passed => (
-                                            tr("status.passed"),
-                                            egui::Color32::from_rgb(76, 175, 80),
-                                        ),
-                                        Status::Failed => (
-                                            tr("status.failed"),
-                                            egui::Color32::from_rgb(244, 67, 54),
-                                        ),
-                                        Status::Unverified => (
-                                            tr("status.unverified"),
-                                            egui::Color32::from_rgb(255, 179, 0),
-                                        ),
-                                    };
-                                    ui.colored_label(status_color, format!("[{status_text}]"));
-
-                                    // Device & Interface
-                                    let dev_iface = if c.interface.is_empty() {
-                                        c.device.clone()
-                                    } else {
-                                        format!("{} ({})", c.device, c.interface)
-                                    };
-                                    ui.strong(dev_iface);
-                                    ui.label("•");
-
-                                    // Property
-                                    ui.label(&c.property);
-                                    ui.label("•");
-
-                                    // Expected vs Current
-                                    ui.label(tf(
-                                        "ui.expected_value",
-                                        &[("value", &format!("{}", c.expected))],
-                                    ));
-                                    if let Some(ref curr) = c.current {
-                                        ui.label(tf(
-                                            "ui.current_curr",
-                                            &[("curr", &format!("{}", curr))],
-                                        ));
-                                    }
-
-                                    ui.with_layout(
-                                        egui::Layout::right_to_left(egui::Align::Center),
-                                        |ui| {
-                                            // Expand/collapse button
-                                            let expand_label = if is_expanded {
-                                                tr("ui.less")
-                                            } else {
-                                                tr("ui.more")
-                                            };
-                                            if ui.small_button(expand_label).clicked() {
-                                                toggle_expand = Some(c.id.clone());
-                                            }
-
-                                            // Copy CLI button
-                                            if ui
-                                                .small_button(tr("action.copy_checkpoint"))
-                                                .clicked()
-                                            {
-                                                let cmd = commands::generate(c);
-                                                let text_to_copy = if cmd.supported && !cmd.gui {
-                                                    cmd.text
-                                                } else if cmd.gui {
-                                                    tf(
-                                                        "ui.gui_step_required_value",
-                                                        &[("value", &format!("{}", cmd.text))],
-                                                    )
-                                                } else {
-                                                    format!(
-                                                        "! {}",
-                                                        self.localizer.message(
-                                                            &self.preferences.language,
-                                                            &cmd.explanation
-                                                        )
-                                                    )
-                                                };
-                                                to_copy = Some((text_to_copy, ""));
-                                            }
-
-                                            ui.label(tf(
-                                                "ui.value_pts",
-                                                &[("value", &format!("{:.1}", c.weight))],
-                                            ));
-                                        },
-                                    );
-                                });
-
-                                // Expanded detail view
-                                if is_expanded {
-                                    ui.add_space(4.0);
-                                    ui.separator();
-                                    ui.add_space(4.0);
-
-                                    egui::Grid::new(format!("detail_grid_{}", c.id))
-                                        .num_columns(2)
-                                        .spacing([12.0, 4.0])
-                                        .show(ui, |ui| {
-                                            ui.strong(tr("table.id"));
-                                            ui.label(&c.id);
-                                            ui.end_row();
-
-                                            ui.strong(tr("table.category"));
-                                            ui.label(&c.category);
-                                            ui.end_row();
-
-                                            ui.strong(tr("detail.path"));
-                                            ui.label(&c.path);
-                                            ui.end_row();
-
-                                            ui.strong(tr("detail.explanation"));
-                                            ui.label(self.localizer.message(
-                                                &self.preferences.language,
-                                                &c.explanation,
-                                            ));
-                                            ui.end_row();
-
-                                            if !c.evidence.is_empty() {
-                                                ui.strong(tr("detail.evidence"));
-                                                ui.vertical(|ui| {
-                                                    for ev in &c.evidence {
-                                                        ui.label(format!("• {ev}"));
-                                                    }
-                                                });
-                                                ui.end_row();
-                                            }
-
-                                            // Command preview
-                                            let cmd = commands::generate(c);
-                                            ui.strong(tr("detail.preview"));
-                                            ui.vertical(|ui| {
-                                                if cmd.supported && !cmd.gui {
-                                                    ui.monospace(&cmd.text);
-                                                } else if cmd.gui {
-                                                    ui.colored_label(
-                                                        egui::Color32::LIGHT_BLUE,
-                                                        tf(
-                                                            "ui.gui_value",
-                                                            &[("value", &format!("{}", cmd.text))],
-                                                        ),
-                                                    );
-                                                } else {
-                                                    ui.colored_label(
-                                                        egui::Color32::LIGHT_RED,
-                                                        tf(
-                                                            "ui.unsupported_value",
-                                                            &[(
-                                                                "value",
-                                                                &format!(
-                                                                    "{}",
-                                                                    self.localizer.message(
-                                                                        &self.preferences.language,
-                                                                        &cmd.explanation
-                                                                    )
-                                                                ),
-                                                            )],
-                                                        ),
-                                                    );
-                                                }
-                                            });
-                                            ui.end_row();
-                                        });
-                                }
-                            });
+        });
+        let widths = [24.0, 90.0, 130.0, 150.0, 160.0, 160.0, 100.0, 50.0, 130.0];
+        let headers = [
+            "",
+            "table.device",
+            "table.interface",
+            "table.property",
+            "table.expected",
+            "table.current",
+            "table.status",
+            "table.points",
+            "table.command",
+        ];
+        egui::ScrollArea::horizontal()
+            .id_salt("checkpoint_horizontal")
+            .show(ui, |ui| {
+                ui.set_min_width(widths.iter().sum::<f32>() + 72.0);
+                ui.horizontal(|ui| {
+                    for (key, width) in headers.iter().zip(widths) {
+                        ui.add_sized([width, 24.0], egui::Label::new(tr(key)).truncate());
                     }
                 });
+                ui.separator();
+                egui::ScrollArea::vertical()
+                    .id_salt("checkpoint_rows")
+                    .show_rows(ui, 32.0, indices.len(), |ui, range| {
+                        if let Some(a) = &self.analysis {
+                            for idx in &indices[range] {
+                                let c = &a.checkpoints[*idx];
+                                ui.push_id(&c.id, |ui| {
+                                    ui.horizontal(|ui| {
+                                        let mut checked = self.is_manually_checked(&c.id);
+                                        if ui
+                                            .add_sized(
+                                                [widths[0], 26.0],
+                                                egui::Checkbox::without_text(&mut checked),
+                                            )
+                                            .changed()
+                                        {
+                                            manual = Some((c.id.clone(), checked));
+                                        }
+                                        let values = [
+                                            c.device.as_str(),
+                                            c.interface.as_str(),
+                                            c.property.as_str(),
+                                            c.expected.as_str(),
+                                            c.current.as_deref().unwrap_or("?"),
+                                        ];
+                                        for (value, width) in values.iter().zip(widths[1..6].iter())
+                                        {
+                                            if ui
+                                                .add_sized(
+                                                    [*width, 26.0],
+                                                    egui::Button::selectable(
+                                                        self.expanded_checkpoint_ids.get(&c.id)
+                                                            == Some(&true),
+                                                        *value,
+                                                    ),
+                                                )
+                                                .on_hover_text(*value)
+                                                .clicked()
+                                            {
+                                                selected = Some(c.id.clone());
+                                            }
+                                        }
+                                        let (key, color) = match c.status {
+                                            Status::Passed => {
+                                                ("status.passed", egui::Color32::LIGHT_GREEN)
+                                            }
+                                            Status::Failed => {
+                                                ("status.failed", egui::Color32::LIGHT_RED)
+                                            }
+                                            Status::Unverified => (
+                                                "status.unverified",
+                                                egui::Color32::from_rgb(255, 190, 80),
+                                            ),
+                                        };
+                                        ui.add_sized(
+                                            [widths[6], 26.0],
+                                            egui::Label::new(
+                                                egui::RichText::new(tr(key)).color(color),
+                                            )
+                                            .truncate(),
+                                        );
+                                        ui.add_sized(
+                                            [widths[7], 26.0],
+                                            egui::Label::new(format!("{}", c.weight)),
+                                        );
+                                        let cmd = commands::generate(c);
+                                        if ui
+                                            .add_enabled_ui(cmd.supported, |ui| {
+                                                ui.add_sized(
+                                                    [widths[8], 26.0],
+                                                    egui::Button::new(tr("action.copy")),
+                                                )
+                                            })
+                                            .inner
+                                            .on_hover_text(catalog.message(&lang, &cmd.explanation))
+                                            .clicked()
+                                        {
+                                            copied = Some(cmd.text);
+                                        }
+                                    })
+                                });
+                            }
+                        }
+                    });
+            });
+        if let Some(id) = selected {
+            self.expanded_checkpoint_ids.clear();
+            self.expanded_checkpoint_ids.insert(id, true);
         }
-
-        // Apply mutations
-        if let Some((id, checked)) = toggle_check {
+        if let Some((id, checked)) = manual {
             self.set_manual_check(&id, checked);
         }
-        if let Some(id) = toggle_expand {
-            let current = self
-                .expanded_checkpoint_ids
-                .get(&id)
-                .copied()
-                .unwrap_or(false);
-            self.expanded_checkpoint_ids.insert(id, !current);
+        if let Some(text) = copied {
+            self.copy_text_with_feedback(ctx, text, "");
         }
-        if let Some((text, label)) = to_copy {
-            self.copy_text_with_feedback(ctx, text, label);
+    }
+
+    pub fn render_detail_panel(&mut self, ctx: &egui::Context) {
+        if self.analysis.is_none() {
+            return;
+        }
+        let catalog = self.localizer.clone();
+        let lang = self.preferences.language.clone();
+        let tr = |key: &str| catalog.text(&lang, key);
+        let selected = self
+            .analysis
+            .as_ref()
+            .and_then(|a| {
+                a.checkpoints
+                    .iter()
+                    .find(|c| self.expanded_checkpoint_ids.get(&c.id) == Some(&true))
+            })
+            .cloned();
+        let mut copy = None;
+        egui::SidePanel::right("checkpoint_details")
+            .default_width(310.0)
+            .width_range(250.0..=500.0)
+            .resizable(true)
+            .show(ctx, |ui| {
+                ui.heading(tr("detail.title"));
+                ui.separator();
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    if let Some(c) = selected {
+                        ui.heading(&c.device);
+                        ui.label(&c.interface);
+                        ui.strong(&c.property);
+                        for (key, value) in [
+                            ("table.expected", c.expected.as_str()),
+                            ("table.current", c.current.as_deref().unwrap_or("?")),
+                            ("table.type", c.device_type.as_str()),
+                            ("table.points", &c.weight.to_string()),
+                        ] {
+                            ui.label(egui::RichText::new(tr(key)).weak());
+                            ui.label(value);
+                        }
+                        ui.separator();
+                        ui.strong(tr("detail.explanation"));
+                        ui.label(catalog.message(&lang, &c.explanation));
+                        ui.strong(tr("detail.path"));
+                        ui.label(&c.path);
+                        ui.collapsing(tr("detail.evidence"), |ui| {
+                            for e in &c.evidence {
+                                ui.label(e);
+                            }
+                        });
+                        ui.separator();
+                        ui.strong(tr("detail.preview"));
+                        let cmd = commands::generate(&c);
+                        ui.label(catalog.message(&lang, &cmd.explanation));
+                        if cmd.supported {
+                            ui.monospace(&cmd.text);
+                            if ui.button(tr("action.copy_checkpoint")).clicked() {
+                                copy = Some(cmd.text);
+                            }
+                        }
+                        let mut manual = self.is_manually_checked(&c.id);
+                        if ui.checkbox(&mut manual, tr("detail.manual")).changed() {
+                            self.set_manual_check(&c.id, manual);
+                        }
+                        ui.small(tr("detail.manual_note"));
+                    } else {
+                        ui.label(tr("detail.select"));
+                    }
+                });
+            });
+        if let Some(text) = copy {
+            self.copy_text_with_feedback(ctx, text, "");
         }
     }
 
@@ -1672,19 +1652,28 @@ impl InspectorApp {
         if incomplete.is_empty() {
             ui.vertical_centered(|ui| {
                 ui.add_space(40.0);
-                ui.heading(tr("ui.all_checkpoints_passed"));
-                ui.label(tr(
-                    "ui.no_pending_remediation_actions_remain_for_this_activity",
-                ));
+                if a.checkpoints.is_empty() {
+                    ui.heading(tr("empty.no_results"));
+                    ui.label(tr("nav.diagnostics"));
+                } else {
+                    ui.heading(tr("ui.all_checkpoints_passed"));
+                    ui.label(tr(
+                        "ui.no_pending_remediation_actions_remain_for_this_activity",
+                    ));
+                }
             });
             return;
         }
 
-        // Sort by weight descending so highest-value fixes appear first
+        // Verified failures come first; group by device/interface, then weight.
         incomplete.sort_by(|a, b| {
-            b.weight
-                .partial_cmp(&a.weight)
-                .unwrap_or(std::cmp::Ordering::Equal)
+            (a.status != Status::Failed, &a.device, &a.interface)
+                .cmp(&(b.status != Status::Failed, &b.device, &b.interface))
+                .then_with(|| {
+                    b.weight
+                        .partial_cmp(&a.weight)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
         });
 
         let mut toggle_check: Option<(String, bool)> = None;
@@ -1723,7 +1712,7 @@ impl InspectorApp {
                             if !c.interface.is_empty() {
                                 ui.label(tf(
                                     "ui.interface_value",
-                                    &[("value", &format!("{}", c.interface))],
+                                    &[("value", &c.interface.to_string())],
                                 ));
                             }
 
@@ -1774,7 +1763,7 @@ impl InspectorApp {
                                 egui::Color32::LIGHT_BLUE,
                                 tf(
                                     "ui.manual_gui_action_value",
-                                    &[("value", &format!("{}", cmd.text))],
+                                    &[("value", &cmd.text.to_string())],
                                 ),
                             );
                         } else {
@@ -1784,13 +1773,10 @@ impl InspectorApp {
                                     "ui.no_automatic_cli_command_available_value",
                                     &[(
                                         "value",
-                                        &format!(
-                                            "{}",
-                                            self.localizer.message(
-                                                &self.preferences.language,
-                                                &cmd.explanation
-                                            )
-                                        ),
+                                        &self
+                                            .localizer
+                                            .message(&self.preferences.language, &cmd.explanation)
+                                            .to_string(),
                                     )],
                                 ),
                             );
@@ -1820,7 +1806,7 @@ impl InspectorApp {
         let current_filter = self
             .command_device_filter
             .clone()
-            .unwrap_or_else(|| tr("filter.all_devices").into());
+            .unwrap_or_else(|| tr("filter.all_devices"));
         let target_device = self.command_device_filter.as_deref();
         let script = commands::device_script(&a.checkpoints, target_device);
 
@@ -1860,21 +1846,20 @@ impl InspectorApp {
             }
 
             // Export to file button
-            if ui.button(tr("ui.save_script_to_file")).clicked() {
-                if let Some(path) = rfd::FileDialog::new()
+            if ui.button(tr("ui.save_script_to_file")).clicked()
+                && let Some(path) = rfd::FileDialog::new()
                     .add_filter(tr("ui.cli_script_txt_ios"), &["txt", "ios", "cli"])
                     .set_file_name("device_script.txt")
                     .save_file()
-                {
-                    if let Err(e) = self.export_data(&path, &script) {
-                        status_update =
-                            Some(tf("ui.error_saving_script_e", &[("e", &format!("{}", e))]));
-                    } else {
-                        status_update = Some(tf(
-                            "ui.script_saved_to_value",
-                            &[("value", &format!("{}", path.display()))],
-                        ));
-                    }
+            {
+                if let Err(e) = self.export_data(&path, &script) {
+                    status_update =
+                        Some(tf("ui.error_saving_script_e", &[("e", &format!("{}", e))]));
+                } else {
+                    status_update = Some(tf(
+                        "ui.script_saved_to_value",
+                        &[("value", &format!("{}", path.display()))],
+                    ));
                 }
             }
         });
@@ -1908,6 +1893,11 @@ impl InspectorApp {
         let tr = |key: &str| catalog.text(&language, key);
         let tf = |key: &str, values: &[(&str, &str)]| catalog.format(&language, key, values);
         let Some(ref a) = self.analysis else { return };
+        let identity = (a.xml.as_ptr() as usize, a.xml.len());
+        if self.xml_cache_identity != identity {
+            self.xml_chunks = xml_chunks(&a.xml);
+            self.xml_cache_identity = identity;
+        }
         let xml_len = a.xml.len();
         let xml_chars = a.xml.chars().count();
         let matches = if !self.xml_search_query.is_empty() {
@@ -1954,12 +1944,20 @@ impl InspectorApp {
 
         ui.add_space(8.0);
 
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.add(
-                egui::TextEdit::multiline(&mut a.xml.as_str())
-                    .font(egui::TextStyle::Monospace)
-                    .desired_width(f32::INFINITY)
-                    .desired_rows(26),
+        egui::ScrollArea::horizontal().show(ui, |ui| {
+            egui::ScrollArea::vertical().id_salt("xml_rows").show_rows(
+                ui,
+                20.0,
+                self.xml_chunks.len(),
+                |ui, range| {
+                    for index in range {
+                        let (start, end) = self.xml_chunks[index];
+                        ui.horizontal(|ui| {
+                            ui.weak(format!("{:>6}", index + 1));
+                            ui.monospace(&a.xml[start..end]);
+                        });
+                    }
+                },
             );
         });
 
@@ -2022,6 +2020,21 @@ impl InspectorApp {
     }
 }
 
+fn xml_chunks(xml: &str) -> Vec<(usize, usize)> {
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    for (index, character) in xml.char_indices() {
+        if character == '\n' || index - start >= 256 {
+            chunks.push((start, index));
+            start = if character == '\n' { index + 1 } else { index };
+        }
+    }
+    if start < xml.len() {
+        chunks.push((start, xml.len()));
+    }
+    chunks
+}
+
 fn canonical_identity(path: &Path) -> PathBuf {
     if let Ok(path) = path.canonicalize() {
         return path;
@@ -2031,10 +2044,10 @@ fn canonical_identity(path: &Path) -> PathBuf {
     } else {
         std::env::current_dir().unwrap_or_default().join(path)
     };
-    if let (Some(parent), Some(name)) = (absolute.parent(), absolute.file_name()) {
-        if let Ok(parent) = parent.canonicalize() {
-            return parent.join(name);
-        }
+    if let (Some(parent), Some(name)) = (absolute.parent(), absolute.file_name())
+        && let Ok(parent) = parent.canonicalize()
+    {
+        return parent.join(name);
     }
     // Normalize non-existing paths too, so repeated folder names cannot collide.
     let mut normalized = PathBuf::new();
@@ -2097,6 +2110,7 @@ impl eframe::App for InspectorApp {
         self.render_top_panel(ctx);
         self.render_side_panel(ctx);
         self.render_bottom_panel(ctx);
+        self.render_detail_panel(ctx);
         self.render_central_panel(ctx);
     }
 
@@ -2257,10 +2271,12 @@ mod tests {
 
     #[test]
     fn test_preferences_serialization() {
-        let mut prefs = Preferences::default();
-        prefs.active_tab = Tab::NextActions;
-        prefs.compact_view = true;
-        prefs.last_activity_path = Some("C:/test.pka".into());
+        let prefs = Preferences {
+            active_tab: Tab::NextActions,
+            compact_view: true,
+            last_activity_path: Some("C:/test.pka".into()),
+            ..Default::default()
+        };
 
         let serialized = serde_json::to_string(&prefs).expect("Serialize preferences");
         let deserialized: Preferences =
@@ -2628,5 +2644,56 @@ mod tests {
             Status::Failed
         );
         assert!(app.progress_analysis.is_some());
+    }
+}
+
+#[cfg(test)]
+mod rendering_checks {
+    use super::*;
+    #[test]
+    fn virtual_xml_rows_preserve_unicode_and_bound_large_lines() {
+        let text = format!(
+            "{}\n<value>Ti\u{1ebf}ng Vi\u{1ec7}t</value>",
+            "\u{e9}".repeat(1000)
+        );
+        let rows = xml_chunks(&text);
+        assert!(rows.iter().all(|(start, end)| end - start <= 259));
+        let joined = rows
+            .iter()
+            .map(|(start, end)| &text[*start..*end])
+            .collect::<String>();
+        assert_eq!(joined, text.replace('\n', ""));
+    }
+    #[test]
+    fn all_tabs_render_with_actual_synthetic_analysis_and_detail_selection() {
+        let context = egui::Context::default();
+        let mut app = InspectorApp::new(None, None);
+        let analysis = inspector::parse(
+            include_str!("../tests/fixtures/synthetic-126.xml").trim_start_matches('\u{feff}'),
+        )
+        .unwrap();
+        app.expanded_checkpoint_ids
+            .insert(analysis.checkpoints[0].id.clone(), true);
+        app.analysis = Some(analysis);
+        for tab in Tab::ALL {
+            app.current_tab = tab;
+            let output = context.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1440., 900.),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    app.render_top_panel(ctx);
+                    app.render_side_panel(ctx);
+                    app.render_bottom_panel(ctx);
+                    app.render_detail_panel(ctx);
+                    app.render_central_panel(ctx);
+                },
+            );
+            assert!(!output.shapes.is_empty(), "{tab:?}");
+        }
     }
 }

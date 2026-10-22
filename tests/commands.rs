@@ -407,3 +407,26 @@ fn scripts_skip_conflicting_requirements_including_gui_and_aliases() {
         assert!(!script.contains(forbidden), "{script}");
     }
 }
+
+#[test]
+fn mask_checkpoint_generates_its_own_command_only_with_explicit_address_context() {
+    let analysis = pka_lab_inspector::inspector::parse(
+        include_str!("fixtures/synthetic-126.xml").trim_start_matches('\u{feff}'),
+    )
+    .unwrap();
+    let address = &analysis.checkpoints[0];
+    let mask = &analysis.checkpoints[1];
+    assert!(generate(mask).supported);
+    assert_eq!(generate(mask).text, generate(address).text);
+    let mut incomplete = mask.clone();
+    incomplete.evidence.retain(|e| !e.starts_with("commands:"));
+    assert!(!generate(&incomplete).supported);
+    let pc_mask = analysis
+        .checkpoints
+        .iter()
+        .find(|c| c.device == "PC1" && c.property == "Subnet Mask")
+        .unwrap();
+    let gui = generate(pc_mask);
+    assert!(gui.gui);
+    assert!(!gui.text.contains("192.0.6.1"));
+}

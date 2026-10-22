@@ -1,5 +1,5 @@
-pub mod model;
-pub mod inspector;
 pub mod commands;
-pub mod reports;
+pub mod inspector;
 pub mod localization;
+pub mod model;
+pub mod reports;

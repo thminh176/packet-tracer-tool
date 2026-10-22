@@ -139,6 +139,7 @@ fn explicit_value(c: &Checkpoint) -> Result<String, &'static str> {
     let property = key(&c.property);
     let marker = match property.as_str() {
         "ipaddress" | "ipv4address" => "commands:ipv4-mask=",
+        "subnetmask" => "commands:ipv4-address=",
         "ipv6address" => "commands:ipv6-prefix=",
         _ => return Ok(c.expected.clone()),
     };
@@ -157,7 +158,12 @@ fn explicit_value(c: &Checkpoint) -> Result<String, &'static str> {
     if !safe(extra) || ["-1", "65535", "4294967295"].contains(&extra) {
         return Err("Invalid or sentinel sibling mask/prefix evidence.");
     }
-    if marker == "commands:ipv4-mask=" {
+    if marker == "commands:ipv4-address=" {
+        if !ip(extra) || extra == "0.0.0.0" || !mask(c.expected.trim()) {
+            return Err("Invalid explicit sibling IPv4 address or subnet mask.");
+        }
+        return Ok(format!("{extra} {}", c.expected.trim()));
+    } else if marker == "commands:ipv4-mask=" {
         if !mask(extra) {
             return Err("Sibling subnet mask is not a contiguous IPv4 mask.");
         }
@@ -229,6 +235,7 @@ fn plan(c: &Checkpoint) -> Result<Plan, &'static str> {
             | "shutdown"
             | "ipv4address"
             | "ipaddress"
+            | "subnetmask"
             | "ipv6address"
             | "ipv6linklocal"
             | "linklocaladdress"
@@ -267,7 +274,7 @@ fn plan(c: &Checkpoint) -> Result<Plan, &'static str> {
             Some(false) => "no shutdown".into(),
             _ => return Err("Shutdown must explicitly be true or false."),
         },
-        "ipaddress" | "ipv4address" if t.len() == 2 && ip(t[0]) && mask(t[1]) => {
+        "ipaddress" | "ipv4address" | "subnetmask" if t.len() == 2 && ip(t[0]) && mask(t[1]) => {
             format!("ip address {} {}", t[0], t[1])
         }
         "ipv6address" if t.len() == 1 && prefix6(t[0]) => format!("ipv6 address {value}"),
@@ -510,7 +517,12 @@ pub fn generate(checkpoint: &Checkpoint) -> Command {
                 gui: true,
                 text: format!(
                     "Desktop > IP Configuration: set {} to {}.",
-                    checkpoint.property, resolved
+                    checkpoint.property,
+                    if property == "subnetmask" {
+                        checkpoint.expected.as_str()
+                    } else {
+                        resolved.as_str()
+                    }
                 ),
                 explanation: "Use the PC/server GUI; IOS commands do not apply to this endpoint."
                     .into(),
@@ -592,6 +604,14 @@ fn conflict_key(c: &Checkpoint, p: &Plan) -> Option<String> {
             property = "interface-state".into()
         }
         "ipaddress" | "ipv4address" => property = "ipv4address".into(),
+        "subnetmask"
+            if !p
+                .context
+                .first()
+                .is_some_and(|s| s.starts_with("endpoint ")) =>
+        {
+            property = "ipv4address".into()
+        }
         "gateway" | "defaultgateway" => property = "gateway".into(),
         _ => (),
     }

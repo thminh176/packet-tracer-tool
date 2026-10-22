@@ -53,18 +53,27 @@ pub fn load(path: &Path) -> Result<Analysis> {
         "Input exceeds 64 MiB limit"
     );
     let bytes = std::fs::read(path).with_context(|| format!("Read {}", path.display()))?;
+    let read_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let decode_started = Instant::now();
     ensure!(bytes.len() <= MAX_BYTES, "Input exceeds 64 MiB limit");
     let plain = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(&bytes);
-    let xml = if plain.iter().copied().find(|b| !b.is_ascii_whitespace()) == Some(b'<') {
-        std::str::from_utf8(plain)
-            .context("XML is not UTF-8")?
-            .to_owned()
+    // An encrypted container can coincidentally start with '<'. Require both
+    // valid UTF-8 and a recognizable XML prefix before selecting plain XML.
+    let plain_xml = std::str::from_utf8(plain).ok().filter(|text| {
+        let text = text.trim_start();
+        text.starts_with("<?xml") || text.starts_with("<PACKETTRACER")
+    });
+    let xml = if let Some(text) = plain_xml {
+        text.to_owned()
     } else {
         std::panic::catch_unwind(|| pktfile::decode(&bytes))
             .map_err(|_| anyhow::anyhow!("Native pktfile decoder rejected malformed container"))?
             .context("Native pktfile decode failed (damaged or unsupported container)")?
     };
+    let decode_ms = decode_started.elapsed().as_secs_f64() * 1000.0;
     let mut analysis = parse(&xml)?;
+    analysis.timings.push(("Read (ms)".into(), read_ms));
+    analysis.timings.push(("Decode (ms)".into(), decode_ms));
     analysis.timings.push((
         "load total (ms)".into(),
         started.elapsed().as_secs_f64() * 1000.0,
@@ -287,6 +296,8 @@ fn assessment(
 pub fn parse(xml: &str) -> Result<Analysis> {
     let started = Instant::now();
     let root = document(xml)?;
+    let xml_parse_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let extraction_started = Instant::now();
     ensure!(
         matches!(
             root.tag.as_str(),
@@ -402,6 +413,11 @@ pub fn parse(xml: &str) -> Result<Analysis> {
             .diagnostics
             .push("No selected assessment leaves found; network state alone is not an assessment and custom/script scoring is not evaluated".into());
     }
+    result.timings.push(("XML parse (ms)".into(), xml_parse_ms));
+    result.timings.push((
+        "Assessment extraction (ms)".into(),
+        extraction_started.elapsed().as_secs_f64() * 1000.0,
+    ));
     if snaps.iter().any(|(_, r)| r == "current") {
         let progress = Analysis {
             xml: xml.to_owned(),
@@ -541,6 +557,7 @@ fn semantic_equal(tag: &str, expected: &str, actual: &str) -> Option<bool> {
 }
 fn attach_command_context(checks: &mut [Checkpoint]) {
     let mut masks = HashMap::<(String, String, String), Vec<String>>::new();
+    let mut addresses = HashMap::<(String, String, String), Vec<String>>::new();
     let mut prefixes = HashMap::<(String, String, String), Vec<u8>>::new();
     let context = |c: &Checkpoint| {
         (
@@ -554,6 +571,18 @@ fn attach_command_context(checks: &mut [Checkpoint]) {
         )
     };
     for c in checks.iter() {
+        if property_tag(&c.property) == Some("IP")
+            && !c.device.is_empty()
+            && !c.interface.is_empty()
+            && c.evidence.iter().all(|e| e == "assessment:compare")
+            && c.expected.parse::<std::net::Ipv4Addr>().is_ok()
+            && !sentinel(&c.expected)
+        {
+            addresses
+                .entry(context(c))
+                .or_default()
+                .push(c.expected.clone());
+        }
         if property_tag(&c.property) == Some("SUBNET")
             && !c.device.is_empty()
             && !c.interface.is_empty()
@@ -577,6 +606,14 @@ fn attach_command_context(checks: &mut [Checkpoint]) {
         }
     }
     for c in checks {
+        if property_tag(&c.property) == Some("SUBNET")
+            && c.evidence.iter().all(|e| e == "assessment:compare")
+            && subnet_mask(&c.expected)
+            && let Some(values) = addresses.get(&context(c)).filter(|v| v.len() == 1)
+        {
+            c.evidence
+                .push(format!("commands:ipv4-address={}", values[0]));
+        }
         if property_tag(&c.property) == Some("IP")
             && c.evidence.iter().all(|e| e == "assessment:compare")
             && c.expected.parse::<std::net::Ipv4Addr>().is_ok()
@@ -786,6 +823,7 @@ fn consistent_observations(values: Vec<String>, ios: Vec<String>, tag: &str) -> 
 /// Validate a small supported semantic subset against an explicitly identified
 /// current network or standalone PKT. Missing/ambiguous/unsupported stays unknown.
 pub fn compare(activity: &mut Analysis, progress: &Analysis) {
+    let validation_started = Instant::now();
     for check in &mut activity.checkpoints {
         check.status = Status::Unverified;
         check.current = None;
@@ -880,4 +918,8 @@ pub fn compare(activity: &mut Analysis, progress: &Analysis) {
     if current.len() != 1 {
         activity.diagnostics.push("Comparison requires exactly one explicitly identified current network or a standalone PKT".into());
     }
+    activity.timings.push((
+        "Validation (ms)".into(),
+        validation_started.elapsed().as_secs_f64() * 1000.0,
+    ));
 }

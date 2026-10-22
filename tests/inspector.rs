@@ -608,3 +608,35 @@ fn real_local_pka_verification() {
         analysis.diagnostics.len()
     );
 }
+
+#[test]
+fn binary_container_starting_with_xml_angle_bracket_is_decoded() {
+    let fixture = (0..4096)
+        .find_map(|n| {
+            let xml = format!("<PACKETTRACER5><!-- synthetic nonce {n} --></PACKETTRACER5>");
+            let encoded = pktfile::encode(&xml).unwrap();
+            (encoded.first() == Some(&b'<')).then_some((xml, encoded))
+        })
+        .expect("deterministic encrypted-prefix regression sample");
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("encrypted.pkt");
+    std::fs::write(&path, fixture.1).unwrap();
+    assert_eq!(load(&path).unwrap().xml, fixture.0);
+}
+
+#[test]
+fn distributable_synthetic_fixture_has_expected_independent_results() {
+    let analysis =
+        parse(include_str!("fixtures/synthetic-126.xml").trim_start_matches('\u{feff}')).unwrap();
+    let summary = analysis.summary();
+    assert_eq!(
+        (
+            summary.total,
+            summary.passed,
+            summary.failed,
+            summary.unverified
+        ),
+        (126, 7, 7, 112)
+    );
+    assert_eq!(summary.total_score, 126.0);
+}

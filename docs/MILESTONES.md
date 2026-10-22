@@ -10,3 +10,9 @@ Orca run: run_743a8b6e0f0f.
 6. Coordinator reviews and integrates isolated worktree commits, resolves compilation failures, executes format/lint/tests, probes real files, builds and packages Windows release. Follow-up corrections are dispatched only after existing ownership settles.
 
 No workers share editable files. Real files are read-only local test inputs and excluded from Git. Release artifacts stay local; GitHub Actions builds downloadable artifacts only when the repository workflow runs.
+
+## Integrated outcome
+
+All four Orca dispatches settled successfully and their scoped commits were reviewed and integrated. Antigravity delivered the initial GUI; a follow-up Codex worker integrated catalog-based localization, atomic exports and asynchronous-state protections. The coordinator added the bounded MIT codec patch, virtualized checkpoint table and raw XML, right-side details, Vietnamese system-font coverage, regression tests, performance timings and local packaging.
+
+The release is a working conservative inspector, with measured real decoding and synthetic validation. Full native Cisco grading parity, universal PKA compatibility, certified selection metadata semantics and all requested complex validators are not claimed. These remain explicit limitations in TEST_RESULTS.md rather than fabricated passing outcomes.
