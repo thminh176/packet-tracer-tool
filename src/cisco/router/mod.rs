@@ -65,6 +65,8 @@ fn param(
         example,
     }
 }
+// A metadata record constructor keeps static family definitions readable.
+#[allow(clippy::too_many_arguments)]
 fn spec(
     id: &'static str,
     en: &'static str,

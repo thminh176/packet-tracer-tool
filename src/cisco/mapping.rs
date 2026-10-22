@@ -34,13 +34,39 @@ pub fn request(c: &Checkpoint, resolved: &str) -> Option<CommandRequest> {
         }
     };
     let family = match property.as_str() {
+        "hostname" => {
+            put("hostname", resolved);
+            "basic.hostname"
+        }
+        "enablesecret" => {
+            put("secret", resolved);
+            "basic.enable_secret"
+        }
+        "bannermotd" => {
+            put("message", resolved);
+            "basic.banner_motd"
+        }
+        "save" | "saveconfiguration" if matches!(resolved, "true" | "yes" | "startup") => {
+            "basic.save"
+        }
         "ipaddress" | "ipv4address" | "subnetmask" => {
             put("interface", &c.interface);
             if t.len() == 2 {
                 put("address", t[0]);
                 put("mask", t[1]);
             }
-            "router.interface.ipv4"
+            if matches!(
+                req.profile,
+                DeviceProfile::Catalyst2960 | DeviceProfile::Catalyst3560
+            ) && c.interface.to_ascii_lowercase().starts_with("vlan")
+            {
+                if let Some(vlan) = c.interface.get(4..) {
+                    put("vlan", vlan);
+                }
+                "switch.svi.ipv4"
+            } else {
+                "router.interface.ipv4"
+            }
         }
         "ipv6address" => {
             put("interface", &c.interface);
@@ -97,6 +123,24 @@ pub fn request(c: &Checkpoint, resolved: &str) -> Option<CommandRequest> {
         }
         "portsecurity" | "portsecuritymaximum" | "portsecurityviolation" | "portsecuritysticky" => {
             put("interface", &c.interface);
+            match property.as_str() {
+                "portsecuritymaximum" => put("maximum", resolved),
+                "portsecurityviolation" => put("violation", resolved),
+                "portsecuritysticky" => put(
+                    "sticky",
+                    match resolved {
+                        "true" | "enabled" => "enabled",
+                        "false" | "disabled" => "disabled",
+                        _ => resolved,
+                    },
+                ),
+                _ => (),
+            }
+            "switch.port_security"
+        }
+        "portsecuritymac" => {
+            put("interface", &c.interface);
+            put("static_mac", resolved);
             "switch.port_security"
         }
         _ if crate::commands::is_static_route_property(&c.property, &c.path) => {
@@ -151,6 +195,7 @@ pub struct CheckpointCoverage {
     pub total: usize,
     pub recognized: usize,
     pub command_ready: usize,
+    pub gui_ready: usize,
     pub missing_parameters: usize,
     pub validation_verified: usize,
     pub unknown: usize,
@@ -164,17 +209,27 @@ pub fn coverage(checkpoints: &[Checkpoint]) -> CheckpointCoverage {
         if c.status != crate::model::Status::Unverified {
             n.validation_verified += 1;
         }
-        if let Some(req) = request(c, &c.expected) {
-            n.recognized += 1;
-            let p = super::generate(&req);
-            if p.executable() {
+        let resolved = crate::commands::explicit_value(c).unwrap_or_else(|_| c.expected.clone());
+        let command = crate::commands::generate(c);
+        if command.supported {
+            if command.gui {
+                n.gui_ready += 1;
+            } else {
                 n.command_ready += 1;
             }
+        }
+        if let Some(req) = request(c, &resolved) {
+            n.recognized += 1;
+            let p = super::generate(&req);
             if p.classification == super::Classification::MissingParameters {
                 n.missing_parameters += 1;
             }
         } else {
-            n.unknown += 1;
+            if command.supported {
+                n.recognized += 1;
+            } else {
+                n.unknown += 1;
+            }
         }
     }
     n

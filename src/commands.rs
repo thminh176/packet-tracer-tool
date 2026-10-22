@@ -152,7 +152,7 @@ pub fn is_ospf_network_property(property: &str, path: &str) -> bool {
 
 // The inspector may attach a uniquely matched explicit sibling requirement.
 // Evidence is never interpreted as raw CLI or mined for arbitrary numbers.
-fn explicit_value(c: &Checkpoint) -> Result<String, &'static str> {
+pub(crate) fn explicit_value(c: &Checkpoint) -> Result<String, &'static str> {
     if c.evidence.iter().any(|e| {
         [
             "assessment:unsupported",
@@ -301,22 +301,6 @@ fn explicit_value(c: &Checkpoint) -> Result<String, &'static str> {
 }
 
 fn plan(c: &Checkpoint) -> Result<Plan, &'static str> {
-    if !is_gui(c) {
-        let explicit = explicit_value(c)?;
-        if let Some(request) = crate::cisco::mapping::request(c, &explicit)
-            && crate::cisco::registry()
-                .iter()
-                .any(|s| s.id == request.family)
-        {
-            let typed = crate::cisco::generate(&request);
-            if !typed.executable() {
-                return Err(
-                    "Recognized requirement is incomplete, incompatible or unsafe; inspect required parameters and device compatibility in Cisco Command Library.",
-                );
-            }
-            return legacy_plan(&typed);
-        }
-    }
     if !safe(&c.expected)
         || !safe(&c.interface)
         || !safe(&c.device)
@@ -348,11 +332,32 @@ fn plan(c: &Checkpoint) -> Result<Plan, &'static str> {
         );
     }
     let p = key(&c.property);
+    if p == "portsecurity" && enabled(value) != Some(true) {
+        return Err(
+            "Only explicit port-security enablement is supported; disablement is not an automatic repair",
+        );
+    }
     let t: Vec<&str> = value.split_whitespace().collect();
     if t.iter()
         .any(|v| ["-1", "65535", "4294967295", "18446744073709551615"].contains(v))
     {
         return Err("Sentinel numeric value in explicit configuration; no commands generated.");
+    }
+    if !is_gui(c) {
+        let explicit = explicit_value(c)?;
+        if let Some(request) = crate::cisco::mapping::request(c, &explicit)
+            && crate::cisco::registry()
+                .iter()
+                .any(|s| s.id == request.family)
+        {
+            let typed = crate::cisco::generate(&request);
+            if !typed.executable() {
+                return Err(
+                    "Recognized requirement is incomplete, incompatible or unsafe; inspect required parameters and device compatibility in Cisco Command Library.",
+                );
+            }
+            return legacy_plan(&typed);
+        }
     }
     let mut out = Plan::default();
     let interface_property = matches!(
@@ -765,6 +770,13 @@ fn interface_order(p: &Plan) -> u8 {
 }
 
 fn conflict_key(c: &Checkpoint, p: &Plan) -> Option<String> {
+    // Equal destinations with distinct forwarding targets/distances are valid
+    // ECMP or floating static routes, not mutually exclusive scalar settings.
+    if is_static_route_property(&c.property, &c.path)
+        || is_ipv6_static_route_property(&c.property, &c.path)
+    {
+        return None;
+    }
     let mut property = key(&c.property);
     let t: Vec<_> = c.expected.split_whitespace().collect();
     if is_static_route_property(&c.property, &c.path) {
@@ -878,6 +890,26 @@ pub fn device_script(checkpoints: &[Checkpoint], device: Option<&str>) -> String
             continue;
         }
         output.push_str(&format!("! Device: {name}\n"));
+        let profiles: Vec<_> = items
+            .iter()
+            .map(|c| crate::cisco::mapping::profile(c))
+            .collect();
+        use crate::cisco::DeviceProfile::*;
+        let has_router = profiles
+            .iter()
+            .any(|p| matches!(p, GenericRouter | Router1941 | Router2911 | Isr4321));
+        let has_switch = profiles
+            .iter()
+            .any(|p| matches!(p, GenericSwitch | Catalyst2960 | Catalyst3560));
+        let models: std::collections::BTreeSet<_> = profiles
+            .iter()
+            .filter(|p| !matches!(p, Unknown | GenericRouter | GenericSwitch))
+            .map(|p| p.label())
+            .collect();
+        if (has_router && has_switch) || models.len() > 1 {
+            output.push_str("! Skipped conflicting device identity/profile evidence; inspect individual requirements.\n");
+            continue;
+        }
         let mut values: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for c in &items {
             if let Some(p) = conflict_plan(c)

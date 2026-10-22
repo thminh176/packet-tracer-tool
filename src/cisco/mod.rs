@@ -1,5 +1,6 @@
 //! Typed, offline Cisco command knowledge. Documentation is not Packet Tracer execution evidence.
 use std::collections::BTreeMap;
+pub mod basic;
 pub mod device_profile;
 pub mod mapping;
 pub mod parser;
@@ -126,7 +127,8 @@ impl CommandPlan {
     }
 }
 pub fn registry() -> Vec<CommandSpec> {
-    let mut v = switch::specs();
+    let mut v = basic::specs();
+    v.extend(switch::specs());
     v.extend(router::specs());
     v
 }
@@ -244,7 +246,9 @@ pub fn generate(req: &CommandRequest) -> CommandPlan {
     if p.support != SupportState::VerifiedPacketTracer {
         p.warnings.push("Not execution-tested in Packet Tracer; verify platform/software compatibility before applying".into());
     }
-    let result = if req.family.starts_with("switch.") {
+    let result = if req.family.starts_with("basic.") {
+        basic::generate(req)
+    } else if req.family.starts_with("switch.") {
         switch::generate(req)
     } else {
         router::generate(req)

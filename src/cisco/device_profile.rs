@@ -81,6 +81,7 @@ impl DeviceProfile {
                 SupportState::Unsupported
             }
             (Catalyst3560, Serial) => SupportState::Unsupported,
+            (Catalyst3560, Multilayer) => SupportState::DocumentedNotTested,
             (Catalyst2960 | Catalyst3560, Basic | Switching | Security) => {
                 SupportState::DocumentedNotTested
             }
