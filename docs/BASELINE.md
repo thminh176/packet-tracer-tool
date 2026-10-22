@@ -7,3 +7,7 @@ Baseline commit: `8d64768`. Audit date: 2026-10-22. Working tree was clean and h
 Known regressions at baseline: IP and subnet-mask checkpoints produce duplicate identical commands in device scripts; unsupported items repeat generic English comments; CLI destination is insufficiently clear. These are the first stabilization changes. Unknown snapshot roles and assessment selection semantics remain diagnosed limitations. Full native Cisco grading, universal activity compatibility and live integration are outside v0.1.0 scope.
 
 Release task graph: command stabilization + UI polish + independent license/ecosystem audit + read-only security review ? integration and source/history audit ? tests, license/vulnerability checks, real GUI/export smoke ? public repository and CI ? annotated v0.1.0 tag ? successful Windows workflow ? release ZIP/checksum verification and publication. Only then may future feature branches be started.
+
+## Public release task graph
+
+Freeze and regression checks → parallel license/ecosystem review, GUI smoke/screenshot, independent security/source review → coordinator integration and allowlisted ZIP verification → public repository main/CI → annotated v0.1.0 tag → successful Windows build and draft assets → downloaded artifact checks → publish release. Future feature work begins only on a separate branch after publication.
