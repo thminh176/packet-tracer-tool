@@ -1,6 +1,28 @@
 //! Assessment mapping preserves requirements; absent context remains missing, never a default.
 use super::{CommandRequest, DeviceProfile};
 use crate::model::Checkpoint;
+pub fn identity_conflict(c: &Checkpoint) -> bool {
+    let models: std::collections::BTreeSet<_> = c
+        .evidence
+        .iter()
+        .filter_map(|e| e.strip_prefix("assessment:device-model="))
+        .map(|s| s.trim().to_ascii_lowercase())
+        .collect();
+    if models.len() > 1 {
+        return true;
+    }
+    let p = profile(c);
+    matches!(
+        (c.device_type.to_ascii_lowercase().as_str(), p),
+        (
+            "router",
+            DeviceProfile::Catalyst2960 | DeviceProfile::Catalyst3560
+        ) | (
+            "switch",
+            DeviceProfile::Router1941 | DeviceProfile::Router2911 | DeviceProfile::Isr4321
+        )
+    )
+}
 pub fn profile(c: &Checkpoint) -> DeviceProfile {
     let models: std::collections::BTreeSet<_> = c
         .evidence
@@ -34,6 +56,10 @@ pub fn request(c: &Checkpoint, resolved: &str) -> Option<CommandRequest> {
         }
     };
     let family = match property.as_str() {
+        "defaultgateway" | "gateway" => {
+            put("gateway", resolved);
+            "switch.default_gateway"
+        }
         "hostname" => {
             put("hostname", resolved);
             "basic.hostname"
@@ -170,9 +196,9 @@ pub fn request(c: &Checkpoint, resolved: &str) -> Option<CommandRequest> {
     req.family = family.into();
     // Only unambiguous named metadata can complete context. Values are never inferred
     // from an unrelated sibling or unlabelled network snapshot.
-    let spec = super::registry().into_iter().find(|s| s.id == family);
+    let spec = super::catalog().iter().find(|s| s.id == family);
     if let Some(spec) = spec {
-        for field in spec.parameters {
+        for field in &spec.parameters {
             if req.parameters.contains_key(field.name) {
                 continue;
             }
@@ -190,7 +216,7 @@ pub fn request(c: &Checkpoint, resolved: &str) -> Option<CommandRequest> {
     }
     Some(req)
 }
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckpointCoverage {
     pub total: usize,
     pub recognized: usize,
@@ -233,4 +259,29 @@ pub fn coverage(checkpoints: &[Checkpoint]) -> CheckpointCoverage {
         }
     }
     n
+}
+/// Command readiness is distinct from automatic verification status and native grading.
+pub fn classify(c: &Checkpoint) -> super::Classification {
+    if c.evidence.iter().any(|e| {
+        matches!(
+            e.as_str(),
+            "assessment:unsupported" | "assessment:ambiguous" | "assessment:inventory"
+        )
+    }) || identity_conflict(c)
+    {
+        return super::Classification::UnknownAmbiguous;
+    }
+    if crate::commands::generate(c).supported {
+        return super::Classification::Ready;
+    }
+    let resolved = crate::commands::explicit_value(c).unwrap_or_else(|_| c.expected.clone());
+    if let Some(req) = request(c, &resolved) {
+        let classification = super::generate(&req).classification;
+        return if classification == super::Classification::Ready {
+            super::Classification::RecognizedUnsupported
+        } else {
+            classification
+        };
+    }
+    super::Classification::UnknownAmbiguous
 }

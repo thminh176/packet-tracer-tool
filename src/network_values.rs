@@ -125,6 +125,9 @@ impl NormalizedNetwork {
         if tokens.len() == 2 {
             let addr: Ipv4Addr = tokens[0].parse().ok()?;
             if let Ok(mask) = tokens[1].parse::<Ipv4Addr>() {
+                if is_contiguous_mask(mask) && is_contiguous_wildcard(mask) {
+                    return None;
+                }
                 if is_contiguous_mask(mask) {
                     let prefix = subnet_to_prefix(mask)?;
                     return Self::from_ip_and_prefix(addr, prefix, trimmed.to_string());
@@ -384,7 +387,7 @@ impl ParsedStaticRoute {
         if parts.len() >= 3 {
             let target = parts[2].trim();
             if let Ok(ip) = target.parse::<Ipv4Addr>() {
-                if ip.is_unspecified() || ip.is_multicast() {
+                if ip.octets()[0] == 0 || ip.is_loopback() || ip.octets()[0] >= 224 {
                     return None;
                 }
                 next_hop = Some(ip);
@@ -452,7 +455,7 @@ impl ParsedStaticRoute {
 
         let target = tokens[2];
         if let Ok(ip) = target.parse::<Ipv4Addr>() {
-            if ip.is_unspecified() || ip.is_multicast() {
+            if ip.octets()[0] == 0 || ip.is_loopback() || ip.octets()[0] >= 224 {
                 return None;
             }
             next_hop = Some(ip);
@@ -572,7 +575,9 @@ impl ParsedIpv6StaticRoute {
             } else {
                 (None, Some(tokens[1].parse::<Ipv6Addr>().ok()?))
             };
-            if next_hop.is_some_and(|ip| ip.is_unspecified() || ip.is_multicast()) {
+            if next_hop
+                .is_some_and(|ip| ip.is_unspecified() || ip.is_multicast() || ip.is_loopback())
+            {
                 return None;
             }
             let distance = if index < tokens.len() {
@@ -630,7 +635,7 @@ impl ParsedIpv6StaticRoute {
         if parts.len() >= 3 {
             let target = parts[2].trim();
             if let Ok(ip) = target.parse::<Ipv6Addr>() {
-                if ip.is_unspecified() || ip.is_multicast() {
+                if ip.is_unspecified() || ip.is_multicast() || ip.is_loopback() {
                     return None;
                 }
                 next_hop = Some(ip);

@@ -14,6 +14,15 @@ fn checkpoint(property: &str, expected: &str) -> Checkpoint {
     };
     if property == "Default Gateway" {
         c.device_type = "Switch".into();
+        c.evidence.extend(
+            [
+                "commands:parameter:ip_routing=disabled",
+                "commands:parameter:address=192.0.2.1",
+                "commands:parameter:mask=255.255.255.0",
+            ]
+            .into_iter()
+            .map(str::to_owned),
+        );
     }
     if matches!(
         property,

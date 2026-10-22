@@ -14,8 +14,8 @@ pub fn specs() -> Vec<CommandSpec> {
     all
 }
 pub fn generate(req: &CommandRequest) -> Result<Vec<ModeCommand>, String> {
-    let spec = specs()
-        .into_iter()
+    let spec = super::catalog()
+        .iter()
         .find(|s| s.id == req.family)
         .ok_or("Unknown router family")?;
     for field in &spec.parameters {
@@ -94,7 +94,8 @@ fn spec(
         source,
         software,
         removal: None,
-        semantic_validation: true,
+        // Parameter validation is not saved-configuration verification.
+        semantic_validation: false,
     }
 }
 fn iface(req: &CommandRequest) -> Result<String, String> {
@@ -148,7 +149,7 @@ fn ipv4(req: &CommandRequest, key: &str) -> Result<std::net::Ipv4Addr, String> {
         .required(key)?
         .parse::<std::net::Ipv4Addr>()
         .map_err(|_| format!("Invalid {key}"))?;
-    if ip.is_unspecified() || ip.is_multicast() || ip.is_broadcast() {
+    if ip.octets()[0] == 0 || ip.is_loopback() || ip.octets()[0] >= 224 {
         return Err(format!("{key} must be unicast"));
     }
     Ok(ip)

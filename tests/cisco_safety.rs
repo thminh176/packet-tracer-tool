@@ -171,3 +171,47 @@ fn mixed_profiles_and_conflicting_ospf_metadata_are_not_repairs() {
     ];
     assert!(!commands::generate(&a).supported);
 }
+#[test]
+fn ospf_area_aliases_are_equal_for_nonzero_areas() {
+    let d = device(
+        "R1",
+        "<LINE>router ospf 20</LINE><LINE> network 10.0.0.0 0.255.255.255 area 0.0.0.2</LINE><LINE>!</LINE>",
+    );
+    assert_eq!(
+        verify("OSPF Network", "20 10.0.0.0 0.255.255.255 2", &d).status,
+        Status::Passed
+    );
+    assert_eq!(
+        verify("OSPF Network", "20 10.0.0.0 0.255.255.255 3", &d).status,
+        Status::Failed
+    );
+}
+#[test]
+fn gateway_and_conflicting_single_checkpoint_models_never_bypass_typed_safety() {
+    let mut c = check("Default Gateway", "192.0.2.254");
+    c.device_type = "Switch".into();
+    c.evidence = vec![
+        "assessment:device-model=3560".into(),
+        "commands:parameter:ip_routing=enabled".into(),
+    ];
+    assert!(!commands::generate(&c).supported);
+    c = check("Static Route", "10.0.0.0 255.0.0.0 192.0.2.1");
+    c.evidence = vec![
+        "assessment:device-model=2960".into(),
+        "assessment:device-model=2911".into(),
+    ];
+    assert!(!commands::generate(&c).supported);
+    assert!(!commands::device_script(&[c], None).contains("ip route "));
+}
+#[test]
+fn ospfv3_and_conflicting_forwarding_targets_do_not_enter_classic_workflows() {
+    let mut c = check("OSPF Network", "20 10.0.0.0 0.255.255.255 0");
+    c.path = "Network / R1 / OSPFv3 / Network".into();
+    assert!(!commands::generate(&c).supported);
+    let mut c = check("Static Route", "10.0.0.0/8");
+    c.evidence = vec![
+        "commands:route-next-hop=192.0.2.1".into(),
+        "commands:route-next-hop=192.0.2.2".into(),
+    ];
+    assert!(!commands::generate(&c).supported);
+}

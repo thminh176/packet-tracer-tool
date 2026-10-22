@@ -1,6 +1,6 @@
 //! Reproducible synthetic coverage and warm operation timings; no private inputs.
 use pka_lab_inspector::cisco::{self, CommandRequest, DeviceProfile};
-use std::{collections::BTreeMap, time::Instant};
+use std::time::Instant;
 fn main() {
     let specs = cisco::registry();
     println!(
@@ -8,18 +8,16 @@ fn main() {
     );
     let mut ready = 0;
     for s in &specs {
-        let parameters: BTreeMap<_, _> = s
-            .parameters
-            .iter()
-            .filter(|p| p.required)
-            .map(|p| (p.name.to_string(), p.example.to_string()))
-            .collect();
-        let req = CommandRequest {
-            family: s.id.into(),
-            device: "Synthetic-Device".into(),
-            profile: DeviceProfile::Unknown,
-            parameters,
+        let profile = if s.id.starts_with("switch.") {
+            if s.capability == cisco::Capability::Multilayer {
+                DeviceProfile::Catalyst3560
+            } else {
+                DeviceProfile::Catalyst2960
+            }
+        } else {
+            DeviceProfile::Router1941
         };
+        let req = cisco::example_request(s, profile);
         let p = cisco::generate(&req);
         if p.executable() {
             ready += 1;

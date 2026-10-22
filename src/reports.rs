@@ -16,6 +16,7 @@ pub fn csv(analysis: &Analysis) -> anyhow::Result<String> {
         "Path",
         "Explanation",
         "Evidence",
+        "Command readiness",
     ])?;
     for c in &analysis.checkpoints {
         let row = vec![
@@ -32,6 +33,7 @@ pub fn csv(analysis: &Analysis) -> anyhow::Result<String> {
             c.path.clone(),
             c.explanation.clone(),
             c.evidence.join("; "),
+            format!("{:?}", c.command_classification),
         ];
         // Prevent spreadsheet formula execution when opening reports in Excel.
         w.write_record(row.iter().map(|v| spreadsheet_safe(v)))?;

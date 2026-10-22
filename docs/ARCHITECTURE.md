@@ -13,3 +13,13 @@ The XML extraction, validation, commands, reports, and UI are original Rust code
 ## Performance
 
 Analysis records available decode, parsing, extraction and comparison timings. The release probe measures end-to-end duration and XML payload size without exporting decoded answers. See test results for measured values, memory/startup methodology, and remaining measurements.
+
+## v0.2 architecture
+
+cisco/mod.rs defines typed CommandSpec, ParameterSpec, CommandRequest, ConfigMode, CommandPlan, support states and the canonical catalog. basic.rs contains shared fundamentals; switch and router modules own bounded family handlers and source metadata. DeviceProfile identifies explicit model evidence; missing models remain generic/unknown, contradictory models stop suggestions.
+
+The catalog is initialized once and borrowed by hot generation/mapping paths. Public registry clones are convenient for GUI exploration. Measurement before caching found 26.469 ms per 1000 warm synthetic basic plans; the final generated report records current measurements. Example requests are constructed by an explicitly named synthetic-learning helper and never fill assessment requirements.
+
+mapping connects explicit properties/path/sibling evidence to typed requests while retaining raw requirements. Command readiness and configuration validation are distinct fields on each checkpoint; aggregate command coverage is computed during background parsing, not on each UI frame. Legacy supported grammars remain guarded adapters while new families move into the registry incrementally.
+
+parser preserves global/interface/router/VLAN/ACL/DHCP/line hierarchy and order, rejects opaque/duplicate mode identities and bounds configuration work. validator handles a deliberately small explicit scalar subset. inspector supplies unique snapshot/device proof before using validators or proving absence; uncertain defaults and contexts stay Unverified. Command generation never executes commands. Reports expose command readiness separately from automatic status and score.

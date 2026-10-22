@@ -526,6 +526,10 @@ pub fn parse(xml: &str) -> Result<Analysis> {
         "parse (ms)".into(),
         started.elapsed().as_secs_f64() * 1000.0,
     ));
+    for check in &mut result.checkpoints {
+        check.command_classification = crate::cisco::mapping::classify(check);
+    }
+    result.command_coverage = crate::cisco::mapping::coverage(&result.checkpoints);
     Ok(result)
 }
 
@@ -723,8 +727,13 @@ fn semantic_equal(tag: &str, expected: &str, actual: &str) -> Option<bool> {
                 return Some(false);
             }
             if let (Some(ea), Some(aa)) = (&exp.area, &act.area) {
-                let norm_ea = if ea == "0.0.0.0" { "0" } else { ea.as_str() };
-                let norm_aa = if aa == "0.0.0.0" { "0" } else { aa.as_str() };
+                let area_id = |s: &str| {
+                    s.parse::<u32>()
+                        .ok()
+                        .or_else(|| s.parse::<std::net::Ipv4Addr>().ok().map(u32::from))
+                };
+                let norm_ea = area_id(ea)?;
+                let norm_aa = area_id(aa)?;
                 if norm_ea != norm_aa {
                     return Some(false);
                 }
@@ -902,6 +911,12 @@ fn ios_observations(device: &Node, interface: &str, tag: &str) -> Vec<String> {
         .filter(|n| n.tag == "LINE")
         .map(|n| n.text.as_str())
         .collect();
+    if lines.len() > 50_000
+        || lines.iter().any(|l| l.len() > 4096)
+        || lines.iter().map(|l| l.len()).sum::<usize>() > 4 * 1024 * 1024
+    {
+        return Vec::new();
+    }
     if lines.iter().any(|line| {
         [
             "banner ",
@@ -1136,6 +1151,7 @@ fn consistent_observations(values: Vec<String>, ios: Vec<String>, tag: &str) -> 
 /// Validate a small supported semantic subset against an explicitly identified
 /// current network or standalone PKT. Missing/ambiguous/unsupported stays unknown.
 pub fn compare(activity: &mut Analysis, progress: &Analysis) {
+    activity.command_coverage.validation_verified = 0;
     let validation_started = Instant::now();
     for check in &mut activity.checkpoints {
         check.status = Status::Unverified;
@@ -1191,6 +1207,7 @@ pub fn compare(activity: &mut Analysis, progress: &Analysis) {
     }
     for check in &mut activity.checkpoints {
         if current.len() != 1
+            || crate::cisco::mapping::identity_conflict(check)
             || check.device.is_empty()
             || sentinel(&check.expected)
             || check.evidence.iter().any(|s| {
@@ -1340,6 +1357,11 @@ pub fn compare(activity: &mut Analysis, progress: &Analysis) {
     if current.len() != 1 {
         activity.diagnostics.push("Comparison requires exactly one explicitly identified current network or a standalone PKT".into());
     }
+    activity.command_coverage.validation_verified = activity
+        .checkpoints
+        .iter()
+        .filter(|c| c.status != Status::Unverified)
+        .count();
     activity.timings.push((
         "Validation (ms)".into(),
         validation_started.elapsed().as_secs_f64() * 1000.0,

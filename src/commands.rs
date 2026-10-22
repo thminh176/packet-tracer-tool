@@ -153,6 +153,11 @@ pub fn is_ospf_network_property(property: &str, path: &str) -> bool {
 // The inspector may attach a uniquely matched explicit sibling requirement.
 // Evidence is never interpreted as raw CLI or mined for arbitrary numbers.
 pub(crate) fn explicit_value(c: &Checkpoint) -> Result<String, &'static str> {
+    if key(&format!("{} {}", c.property, c.path)).contains("ospfv3") {
+        return Err(
+            "OSPFv3 has different IPv6 process/interface semantics and is not supported by the OSPFv2 workflow",
+        );
+    }
     if c.evidence.iter().any(|e| {
         [
             "assessment:unsupported",
@@ -168,6 +173,14 @@ pub(crate) fn explicit_value(c: &Checkpoint) -> Result<String, &'static str> {
     if is_static_route_property(&c.property, &c.path) {
         if let Ok(mut r) = crate::network_values::ParsedStaticRoute::parse(&c.expected) {
             if !r.is_complete {
+                let targets: std::collections::BTreeSet<_> = c
+                    .evidence
+                    .iter()
+                    .filter_map(|e| e.strip_prefix("commands:route-next-hop="))
+                    .collect();
+                if targets.len() > 1 {
+                    return Err("Conflicting explicit route forwarding targets");
+                }
                 for ev in &c.evidence {
                     if let Some(target) = ev.strip_prefix("commands:route-next-hop=") {
                         if let Ok(nh) = target.parse::<Ipv4Addr>() {
@@ -301,6 +314,9 @@ pub(crate) fn explicit_value(c: &Checkpoint) -> Result<String, &'static str> {
 }
 
 fn plan(c: &Checkpoint) -> Result<Plan, &'static str> {
+    if crate::cisco::mapping::identity_conflict(c) {
+        return Err("Conflicting device model/type evidence; no commands generated");
+    }
     if !safe(&c.expected)
         || !safe(&c.interface)
         || !safe(&c.device)
@@ -353,8 +369,10 @@ fn plan(c: &Checkpoint) -> Result<Plan, &'static str> {
     if matches!(
         profile,
         DeviceProfile::GenericSwitch | DeviceProfile::Catalyst2960 | DeviceProfile::Catalyst3560
-    ) && (p.starts_with("nat")
-        || p.starts_with("dhcp")
+    ) && (matches!(
+        p.as_str(),
+        "natrole" | "natstatic" | "natoverload" | "natpool"
+    ) || p.starts_with("dhcp")
         || p.starts_with("rip")
         || p.starts_with("eigrp")
         || matches!(p.as_str(), "standardacl" | "extendedacl" | "aclattachment"))
@@ -377,7 +395,7 @@ fn plan(c: &Checkpoint) -> Result<Plan, &'static str> {
     if !is_gui(c) {
         let explicit = explicit_value(c)?;
         if let Some(request) = crate::cisco::mapping::request(c, &explicit)
-            && crate::cisco::registry()
+            && crate::cisco::catalog()
                 .iter()
                 .any(|s| s.id == request.family)
         {
@@ -654,7 +672,7 @@ pub fn generate(checkpoint: &Checkpoint) -> Command {
     };
     if !is_gui(checkpoint)
         && let Some(req) = crate::cisco::mapping::request(checkpoint, &resolved)
-        && crate::cisco::registry().iter().any(|s| s.id == req.family)
+        && crate::cisco::catalog().iter().any(|s| s.id == req.family)
     {
         let typed = crate::cisco::generate(&req);
         if !typed.executable() {
@@ -937,7 +955,12 @@ pub fn device_script(checkpoints: &[Checkpoint], device: Option<&str>) -> String
             .filter(|p| !matches!(p, Unknown | GenericRouter | GenericSwitch))
             .map(|p| p.label())
             .collect();
-        if (has_router && has_switch) || models.len() > 1 {
+        if (has_router && has_switch)
+            || models.len() > 1
+            || items
+                .iter()
+                .any(|c| crate::cisco::mapping::identity_conflict(c))
+        {
             output.push_str("! Skipped conflicting device identity/profile evidence; inspect individual requirements.\n");
             continue;
         }

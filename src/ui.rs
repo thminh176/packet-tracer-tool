@@ -1644,9 +1644,25 @@ impl InspectorApp {
             ui.add_space(8.0);
             ui.heading(tr("ui.assessment_overview"));
             ui.add_space(8.0);
+            let coverage = &a.command_coverage;
+            ui.label(tf(
+                "cisco.coverage_summary",
+                &[
+                    ("recognized", &coverage.recognized.to_string()),
+                    ("commands", &coverage.command_ready.to_string()),
+                    ("gui", &coverage.gui_ready.to_string()),
+                    ("verified", &coverage.validation_verified.to_string()),
+                    ("total", &s.total.to_string()),
+                ],
+            ));
+            ui.label(
+                egui::RichText::new(tr("cisco.coverage_notice"))
+                    .small()
+                    .weak(),
+            );
 
-            // Metrics cards in a row
-            ui.horizontal(|ui| {
+            // Metrics cards wrap for narrow windows and longer Vietnamese labels.
+            ui.horizontal_wrapped(|ui| {
                 // Card 1: Checkpoints
                 egui::Frame::group(ui.style())
                     .inner_margin(egui::Margin::same(12))
@@ -2004,6 +2020,15 @@ impl InspectorApp {
                         ui.heading(&c.device);
                         ui.label(&c.interface);
                         ui.strong(&c.property);
+                        let classification_key = match c.command_classification {
+                            cisco::Classification::Ready => "cisco.class.ready",
+                            cisco::Classification::MissingParameters => "cisco.class.missing",
+                            cisco::Classification::RecognizedUnsupported => {
+                                "cisco.class.unsupported"
+                            }
+                            cisco::Classification::UnknownAmbiguous => "cisco.class.unknown",
+                        };
+                        ui.label(egui::RichText::new(tr(classification_key)).small().weak());
 
                         // Protocol badge if applicable
                         if let Some(badge) = detect_protocol(&c) {
@@ -2125,6 +2150,7 @@ impl InspectorApp {
                                 && curr_str != "?"
                             {
                                 let curr_cp = Checkpoint {
+                                    command_classification: Default::default(),
                                     property: c.property.clone(),
                                     path: c.path.clone(),
                                     expected: curr_str.clone(),
@@ -2741,7 +2767,7 @@ impl InspectorApp {
         let language = self.preferences.language.clone();
         let tr = |key: &str| catalog.text(&language, key);
         let tf = |key: &str, values: &[(&str, &str)]| catalog.format(&language, key, values);
-        let is_vi = language == "vi";
+        let is_vi = matches!(language.as_str(), "vi" | "vi-VN" | "vi_VN");
 
         let mut do_copy: Option<(String, String)> = None;
 
@@ -2803,7 +2829,11 @@ impl InspectorApp {
                 .as_deref()
                 .unwrap_or(&all_topics_label);
             egui::ComboBox::from_id_salt("cisco_topic_filter_combo")
-                .selected_text(current_topic)
+                .selected_text(if current_topic.starts_with("cisco.topic.") {
+                    tr(current_topic)
+                } else {
+                    current_topic.to_owned()
+                })
                 .show_ui(ui, |ui| {
                     if ui
                         .selectable_label(
@@ -2816,7 +2846,17 @@ impl InspectorApp {
                     }
                     for topic in &unique_topics {
                         let is_sel = self.library_topic_filter.as_deref() == Some(topic.as_str());
-                        if ui.selectable_label(is_sel, topic).clicked() {
+                        if ui
+                            .selectable_label(
+                                is_sel,
+                                if topic.starts_with("cisco.topic.") {
+                                    tr(topic)
+                                } else {
+                                    topic.clone()
+                                },
+                            )
+                            .clicked()
+                        {
                             self.library_topic_filter = Some(topic.clone());
                         }
                     }
@@ -2841,10 +2881,7 @@ impl InspectorApp {
 
             // Target device name
             ui.label(tr("cisco.target_device"));
-            ui.add(
-                egui::TextEdit::singleline(&mut self.library_target_device)
-                    .desired_width(80.0),
-            );
+            ui.add(egui::TextEdit::singleline(&mut self.library_target_device).desired_width(80.0));
         });
 
         ui.separator();
@@ -2890,7 +2927,8 @@ impl InspectorApp {
                         || spec.name_vi.to_lowercase().contains(&q);
                     let id_match = spec.id.to_lowercase().contains(&q);
                     let syntax_match = spec.syntax.to_lowercase().contains(&q);
-                    let topic_match = spec.topic.to_lowercase().contains(&q);
+                    let topic_match = spec.topic.to_lowercase().contains(&q)
+                        || tr(spec.topic).to_lowercase().contains(&q);
                     if !name_match && !id_match && !syntax_match && !topic_match {
                         return false;
                     }
@@ -2957,8 +2995,7 @@ impl InspectorApp {
                                         if btn.clicked()
                                             && self.library_selected_id.as_deref() != Some(spec.id)
                                         {
-                                            self.library_selected_id =
-                                                Some(spec.id.to_string());
+                                            self.library_selected_id = Some(spec.id.to_string());
                                             for p in &spec.parameters {
                                                 self.library_parameters
                                                     .entry(p.name.to_string())
@@ -2969,10 +3006,7 @@ impl InspectorApp {
                                             egui::Layout::right_to_left(egui::Align::Center),
                                             |ui| {
                                                 render_cisco_support_badge(
-                                                    ui,
-                                                    support,
-                                                    &catalog,
-                                                    &language,
+                                                    ui, support, &catalog, &language,
                                                 );
                                             },
                                         );
@@ -2983,7 +3017,15 @@ impl InspectorApp {
                                         );
                                         ui.separator();
                                         ui.label(
-                                            egui::RichText::new(spec.topic).size(10.0).italics(),
+                                            egui::RichText::new(
+                                                if spec.topic.starts_with("cisco.topic.") {
+                                                    tr(spec.topic)
+                                                } else {
+                                                    spec.topic.to_owned()
+                                                },
+                                            )
+                                            .size(10.0)
+                                            .italics(),
                                         );
                                     });
                                 });
@@ -3025,7 +3067,11 @@ impl InspectorApp {
                                 ui.separator();
                                 ui.label(format!("{}: {}", tr("cisco.mode"), spec.mode));
                                 ui.separator();
-                                ui.label(format!("{}: {:?}", tr("cisco.capability"), spec.capability));
+                                ui.label(format!(
+                                    "{}: {:?}",
+                                    tr("cisco.capability"),
+                                    spec.capability
+                                ));
                             });
                             ui.add_space(6.0);
 
@@ -3066,10 +3112,7 @@ impl InspectorApp {
                                 .show(ui, |ui| {
                                     ui.horizontal(|ui| {
                                         render_cisco_support_badge(
-                                            ui,
-                                            support,
-                                            &catalog,
-                                            &language,
+                                            ui, support, &catalog, &language,
                                         );
                                         ui.label(
                                             egui::RichText::new(format!(
@@ -3092,9 +3135,8 @@ impl InspectorApp {
                                 .show(ui, |ui| {
                                     ui.horizontal(|ui| {
                                         ui.monospace(
-                                            egui::RichText::new(spec.syntax).color(
-                                                egui::Color32::from_rgb(144, 202, 249),
-                                            ),
+                                            egui::RichText::new(spec.syntax)
+                                                .color(egui::Color32::from_rgb(144, 202, 249)),
                                         );
                                         ui.with_layout(
                                             egui::Layout::right_to_left(egui::Align::Center),
@@ -3154,10 +3196,8 @@ impl InspectorApp {
                                     && ui.small_button(tr("cisco.copy_verification")).clicked()
                                 {
                                     let joined = spec.verification.join("\n");
-                                    do_copy = Some((
-                                        joined,
-                                        tr("cisco.verification_copied").to_string(),
-                                    ));
+                                    do_copy =
+                                        Some((joined, tr("cisco.verification_copied").to_string()));
                                 }
                             });
                             if spec.verification.is_empty() {
@@ -3178,16 +3218,18 @@ impl InspectorApp {
                             ui.add_space(10.0);
 
                             // Parameter Form
+                            ui.label(
+                                egui::RichText::new(tr("cisco.example_notice"))
+                                    .small()
+                                    .weak(),
+                            );
                             ui.horizontal(|ui| {
                                 ui.heading(tr("cisco.parameters"));
                                 if !spec.parameters.is_empty() {
                                     if ui.button(tr("cisco.fill_all_examples")).clicked() {
-                                        for p in &spec.parameters {
-                                            self.library_parameters.insert(
-                                                p.name.to_string(),
-                                                p.example.to_string(),
-                                            );
-                                        }
+                                        self.library_parameters =
+                                            cisco::example_request(spec, self.library_profile)
+                                                .parameters;
                                     }
                                     if ui.button(tr("cisco.reset_parameters")).clicked() {
                                         self.library_parameters.clear();
@@ -3212,9 +3254,7 @@ impl InspectorApp {
                                                             "[{}]",
                                                             tr("cisco.param_required")
                                                         ))
-                                                        .color(egui::Color32::from_rgb(
-                                                            229, 57, 53,
-                                                        ))
+                                                        .color(egui::Color32::from_rgb(229, 57, 53))
                                                         .strong(),
                                                     );
                                                 } else {
@@ -3280,12 +3320,10 @@ impl InspectorApp {
                             ui.separator();
                             ui.horizontal(|ui| {
                                 ui.heading(tr("cisco.preview_title"));
-                                if plan.executable() && ui.button(tr("cisco.copy_script")).clicked() {
+                                if plan.executable() && ui.button(tr("cisco.copy_script")).clicked()
+                                {
                                     let script = plan.script();
-                                    do_copy = Some((
-                                        script,
-                                        tr("cisco.script_copied").to_string(),
-                                    ));
+                                    do_copy = Some((script, tr("cisco.script_copied").to_string()));
                                 }
                             });
 
@@ -3329,17 +3367,14 @@ impl InspectorApp {
                                         .inner_margin(egui::Margin::symmetric(8, 6))
                                         .show(ui, |ui| {
                                             ui.strong(
-                                                egui::RichText::new(tr(
-                                                    "cisco.missing_parameters",
-                                                ))
-                                                .color(egui::Color32::from_rgb(239, 83, 80)),
+                                                egui::RichText::new(tr("cisco.missing_parameters"))
+                                                    .color(egui::Color32::from_rgb(239, 83, 80)),
                                             );
                                             for mp in &plan.missing_parameters {
                                                 ui.label(
-                                                    egui::RichText::new(format!("  • {mp}"))
-                                                        .color(egui::Color32::from_rgb(
-                                                            255, 205, 210,
-                                                        )),
+                                                    egui::RichText::new(format!("  • {mp}")).color(
+                                                        egui::Color32::from_rgb(255, 205, 210),
+                                                    ),
                                                 );
                                             }
                                         });
@@ -3355,12 +3390,13 @@ impl InspectorApp {
                                         .show(ui, |ui| {
                                             ui.strong(
                                                 egui::RichText::new(tr("cisco.warnings"))
-                                                    .color(egui::Color32::from_rgb(
-                                                        255, 183, 77,
-                                                    )),
+                                                    .color(egui::Color32::from_rgb(255, 183, 77)),
                                             );
                                             for w in &plan.warnings {
-                                                ui.label(format!("  • {w}"));
+                                                ui.label(format!(
+                                                    "  • {}",
+                                                    catalog.message(&language, w)
+                                                ));
                                             }
                                         });
                                     ui.add_space(4.0);
@@ -3553,9 +3589,13 @@ impl eframe::App for InspectorApp {
 
         // Render UI panels
         self.render_top_panel(ctx);
-        self.render_side_panel(ctx);
+        if self.current_tab != Tab::CommandLibrary {
+            self.render_side_panel(ctx);
+        }
         self.render_bottom_panel(ctx);
-        self.render_detail_panel(ctx);
+        if self.current_tab != Tab::CommandLibrary {
+            self.render_detail_panel(ctx);
+        }
         self.render_central_panel(ctx);
 
         if self.show_settings {
@@ -3581,8 +3621,10 @@ mod tests {
 
     fn make_test_analysis() -> Analysis {
         Analysis {
+            command_coverage: Default::default(),
             checkpoints: vec![
                 Checkpoint {
+                    command_classification: Default::default(),
                     id: "chk1".into(),
                     device: "Router0".into(),
                     device_type: "Router".into(),
@@ -3598,6 +3640,7 @@ mod tests {
                     evidence: vec!["assessment:passed".into()],
                 },
                 Checkpoint {
+                    command_classification: Default::default(),
                     id: "chk2".into(),
                     device: "Switch0".into(),
                     device_type: "Switch".into(),
@@ -3613,6 +3656,7 @@ mod tests {
                     evidence: vec![],
                 },
                 Checkpoint {
+                    command_classification: Default::default(),
                     id: "chk3".into(),
                     device: "PC0".into(),
                     device_type: "PC".into(),
@@ -4151,6 +4195,7 @@ mod rendering_checks {
     #[test]
     fn test_protocol_detection_and_badges() {
         let cp_ipv4 = Checkpoint {
+            command_classification: Default::default(),
             id: "route1".into(),
             device: "Router0".into(),
             property: "staticroute".into(),
@@ -4168,6 +4213,7 @@ mod rendering_checks {
         );
 
         let cp_ipv6 = Checkpoint {
+            command_classification: Default::default(),
             id: "route2".into(),
             device: "Router0".into(),
             property: "ipv6staticroute".into(),
@@ -4185,6 +4231,7 @@ mod rendering_checks {
         );
 
         let cp_ospf = Checkpoint {
+            command_classification: Default::default(),
             id: "ospf1".into(),
             device: "Router0".into(),
             property: "ospfnetwork".into(),
@@ -4199,6 +4246,7 @@ mod rendering_checks {
     #[test]
     fn test_extract_network_detail_fields() {
         let cp_static = Checkpoint {
+            command_classification: Default::default(),
             id: "r1".into(),
             device: "R1".into(),
             property: "staticroute".into(),
@@ -4214,6 +4262,7 @@ mod rendering_checks {
         assert_eq!(detail_static.badge, ProtocolBadge::Ipv4StaticRoute);
 
         let cp_ospf = Checkpoint {
+            command_classification: Default::default(),
             id: "o1".into(),
             device: "R1".into(),
             property: "ospfnetwork".into(),
@@ -4264,6 +4313,7 @@ mod rendering_checks {
         let analysis = Analysis {
             checkpoints: vec![
                 Checkpoint {
+                    command_classification: Default::default(),
                     id: "chk_static".into(),
                     device: "Router1".into(),
                     device_type: "Router".into(),
@@ -4279,6 +4329,7 @@ mod rendering_checks {
                     evidence: vec![],
                 },
                 Checkpoint {
+                    command_classification: Default::default(),
                     id: "chk_ospf".into(),
                     device: "Router2".into(),
                     device_type: "Router".into(),
@@ -4383,7 +4434,9 @@ mod rendering_checks {
         let q_en = "address";
         let match_en: Vec<_> = specs
             .iter()
-            .filter(|s| s.name_en.to_lowercase().contains(q_en) || s.name_vi.to_lowercase().contains(q_en))
+            .filter(|s| {
+                s.name_en.to_lowercase().contains(q_en) || s.name_vi.to_lowercase().contains(q_en)
+            })
             .collect();
         assert_eq!(match_en.len(), 1);
         assert_eq!(match_en[0].id, "router.interface_ip");
@@ -4392,16 +4445,17 @@ mod rendering_checks {
         let q_vi = "giao tiếp";
         let match_vi: Vec<_> = specs
             .iter()
-            .filter(|s| s.parameters.iter().any(|p| p.description_vi.to_lowercase().contains(q_vi)))
+            .filter(|s| {
+                s.parameters
+                    .iter()
+                    .any(|p| p.description_vi.to_lowercase().contains(q_vi))
+            })
             .collect();
         assert_eq!(match_vi.len(), 1);
 
         // Search by syntax
         let q_syn = "vlan <vlan_id>";
-        let match_syn: Vec<_> = specs
-            .iter()
-            .filter(|s| s.syntax.contains(q_syn))
-            .collect();
+        let match_syn: Vec<_> = specs.iter().filter(|s| s.syntax.contains(q_syn)).collect();
         assert_eq!(match_syn.len(), 1);
         assert_eq!(match_syn[0].id, "switch.vlan_create");
     }
@@ -4411,8 +4465,14 @@ mod rendering_checks {
         let catalog = Localizer::new();
         // VerifiedPacketTracer must be strictly distinguished
         let _s_pt = SupportState::VerifiedPacketTracer;
-        assert_eq!(catalog.text("en", "cisco.support.verified_pt"), "Packet Tracer Verified");
-        assert_eq!(catalog.text("vi", "cisco.support.verified_pt"), "Đã xác minh Packet Tracer");
+        assert_eq!(
+            catalog.text("en", "cisco.support.verified_pt"),
+            "Packet Tracer Verified"
+        );
+        assert_eq!(
+            catalog.text("vi", "cisco.support.verified_pt"),
+            "Đã xác minh Packet Tracer"
+        );
 
         // DocumentedNotTested must NEVER claim PT verified
         let _s_doc = SupportState::DocumentedNotTested;
@@ -4458,9 +4518,7 @@ mod rendering_checks {
         assert!(app.library_selected_id.is_some());
         let selected_id = app.library_selected_id.clone().unwrap();
         let spec = specs.iter().find(|s| s.id == selected_id).unwrap();
-        for p in &spec.parameters {
-            app.library_parameters.insert(p.name.to_string(), p.example.to_string());
-        }
+        app.library_parameters = cisco::example_request(spec, app.library_profile).parameters;
         assert!(!app.library_parameters.is_empty());
 
         // Test rendering with Vietnamese locale
@@ -4584,16 +4642,14 @@ mod rendering_checks {
                 syntax: "hostname <name>",
                 mode: "global",
                 capability: Capability::Basic,
-                parameters: vec![
-                    cisco::ParameterSpec {
-                        name: "hostname",
-                        kind: cisco::ParameterKind::Identifier,
-                        required: true,
-                        description_en: "Device Hostname",
-                        description_vi: "Tên thiết bị",
-                        example: "R1-CORE",
-                    },
-                ],
+                parameters: vec![cisco::ParameterSpec {
+                    name: "hostname",
+                    kind: cisco::ParameterKind::Identifier,
+                    required: true,
+                    description_en: "Device Hostname",
+                    description_vi: "Tên thiết bị",
+                    example: "R1-CORE",
+                }],
                 prerequisites: vec![],
                 verification: vec!["show running-config | include hostname"],
                 source: "Cisco IOS Basic Configuration Guide",

@@ -133,11 +133,11 @@ fn validate(req: &CommandRequest, spec: &CommandSpec) -> Result<(), String> {
     Ok(())
 }
 pub fn generate(req: &CommandRequest) -> Result<Vec<ModeCommand>, String> {
-    let spec = super::specs()
-        .into_iter()
+    let spec = crate::cisco::catalog()
+        .iter()
         .find(|s| s.id == req.family)
         .ok_or("Unknown switch family")?;
-    validate(req, &spec)?;
+    validate(req, spec)?;
     let global = |s: String| vec![at(ConfigMode::Global, s)];
     let iface = |s: String| vec![at(ConfigMode::Interface(req.get("interface").into()), s)];
     match req.family.as_str() {

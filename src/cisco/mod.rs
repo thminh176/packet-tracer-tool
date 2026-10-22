@@ -93,11 +93,12 @@ impl CommandRequest {
         }
     }
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum Classification {
     Ready,
     MissingParameters,
     RecognizedUnsupported,
+    #[default]
     UnknownAmbiguous,
 }
 #[derive(Debug, Clone)]
@@ -128,9 +129,45 @@ impl CommandPlan {
     }
 }
 pub fn registry() -> Vec<CommandSpec> {
+    catalog().to_vec()
+}
+pub fn catalog() -> &'static [CommandSpec] {
+    static CATALOG: std::sync::OnceLock<Vec<CommandSpec>> = std::sync::OnceLock::new();
+    CATALOG.get_or_init(build_catalog)
+}
+fn build_catalog() -> Vec<CommandSpec> {
     let mut v = basic::specs();
     v.extend(switch::specs());
     v.extend(router::specs());
+    for s in &mut v {
+        s.topic = if s.id.starts_with("basic.") {
+            "cisco.topic.basics"
+        } else if s.id.contains(".ospf.") {
+            "cisco.topic.ospf"
+        } else if s.id.contains(".eigrp.") {
+            "cisco.topic.eigrp"
+        } else if s.id.contains(".rip.") {
+            "cisco.topic.rip"
+        } else if s.id.contains(".route.") {
+            "cisco.topic.routes"
+        } else if s.id.contains(".acl.") {
+            "cisco.topic.acl"
+        } else if s.id.contains(".nat.") {
+            "cisco.topic.nat"
+        } else if s.id.contains(".dhcp.") {
+            "cisco.topic.dhcp"
+        } else if s.id.contains("stp") {
+            "cisco.topic.stp"
+        } else if s.id.contains("security") {
+            "cisco.topic.security"
+        } else if s.id.contains("etherchannel") {
+            "cisco.topic.etherchannel"
+        } else if s.id.starts_with("switch.") {
+            "cisco.topic.switching"
+        } else {
+            "cisco.topic.interfaces"
+        };
+    }
     for s in &mut v {
         s.semantic_validation = matches!(
             s.id,
@@ -151,6 +188,43 @@ pub fn registry() -> Vec<CommandSpec> {
         );
     }
     v
+}
+/// Explicit synthetic learning examples. Never used to fill assessment requirements.
+pub fn example_request(spec: &CommandSpec, profile: DeviceProfile) -> CommandRequest {
+    let mut req = CommandRequest {
+        family: spec.id.into(),
+        device: "Synthetic-Device".into(),
+        profile,
+        parameters: spec
+            .parameters
+            .iter()
+            .filter(|p| p.required)
+            .map(|p| (p.name.into(), p.example.into()))
+            .collect(),
+    };
+    match spec.id {
+        "switch.trunk_native" | "switch.trunk_allowed" => {
+            req.parameters
+                .insert("interface_mode".into(), "trunk".into());
+            if spec.id == "switch.trunk_allowed" {
+                req.parameters.insert("vlans".into(), "10,20-22".into());
+            }
+        }
+        "switch.etherchannel" => {
+            req.parameters.insert("access_vlan".into(), "10".into());
+            req.parameters
+                .insert("group_access_vlan".into(), "10".into());
+        }
+        "router.interface.dot1q" => {
+            req.parameters
+                .insert("interface".into(), "GigabitEthernet0/0.10".into());
+        }
+        "router.rip.network" => {
+            req.parameters.insert("network".into(), "10.0.0.0/8".into());
+        }
+        _ => (),
+    }
+    req
 }
 pub fn identifier(s: &str) -> bool {
     !s.is_empty()
@@ -216,7 +290,7 @@ pub fn generate(req: &CommandRequest) -> CommandPlan {
         verification: vec![],
         support: SupportState::Unknown,
     };
-    let specs = registry();
+    let specs = catalog();
     let Some(spec) = specs.iter().find(|s| s.id == req.family) else {
         return p;
     };
@@ -279,6 +353,10 @@ pub fn generate(req: &CommandRequest) -> CommandPlan {
             p.classification = Classification::Ready;
         }
         Err(reason) => {
+            if let Some(field) = reason.strip_prefix("Missing required parameter: ") {
+                p.classification = Classification::MissingParameters;
+                p.missing_parameters.push(field.into());
+            }
             p.warnings.push(reason);
         }
     }
