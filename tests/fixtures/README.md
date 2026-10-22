@@ -1,0 +1,1 @@
+This is an original synthetic XML fixture: 126 checkpoints, 126 points, seven named devices. Seven IPv4 mismatches, seven mask matches, and 112 unsupported checks are intentional. It is not a real Packet Tracer activity and does not establish real-world 126-checkpoint compatibility. No private answers or real file contents were used.
