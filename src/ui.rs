@@ -1,7 +1,11 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    path::PathBuf,
-    sync::mpsc::{channel, Receiver, Sender},
+    io::Write,
+    path::{Path, PathBuf},
+    sync::{
+        Arc,
+        mpsc::{Receiver, Sender, channel},
+    },
     time::Instant,
 };
 
@@ -10,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use pka_lab_inspector::commands;
 use pka_lab_inspector::inspector;
+use pka_lab_inspector::localization::Localizer;
 use pka_lab_inspector::model::{Analysis, Checkpoint, Status};
 use pka_lab_inspector::reports;
 
@@ -37,12 +42,12 @@ impl Tab {
 
     pub fn title(&self) -> &'static str {
         match self {
-            Tab::Overview => "Overview",
-            Tab::Checkpoints => "Checkpoints",
-            Tab::NextActions => "Next Actions",
-            Tab::DeviceCommands => "Device Commands",
-            Tab::RawXml => "Raw XML",
-            Tab::Diagnostics => "Diagnostics",
+            Tab::Overview => "nav.overview",
+            Tab::Checkpoints => "nav.checkpoints",
+            Tab::NextActions => "nav.next_actions",
+            Tab::DeviceCommands => "nav.device_commands",
+            Tab::RawXml => "nav.raw_xml",
+            Tab::Diagnostics => "nav.diagnostics",
         }
     }
 
@@ -70,7 +75,9 @@ pub enum StatusFilter {
 
 /// User preferences saved across sessions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Preferences {
+    pub language: String,
     pub dark_theme: bool,
     pub last_activity_path: Option<String>,
     pub last_progress_path: Option<String>,
@@ -83,6 +90,7 @@ pub struct Preferences {
 impl Default for Preferences {
     fn default() -> Self {
         Self {
+            language: "vi".into(),
             dark_theme: true,
             last_activity_path: None,
             last_progress_path: None,
@@ -101,20 +109,24 @@ pub struct ActivityChecklist {
     pub notes: HashMap<String, String>,
 }
 
-/// Messages sent from background threads to the UI.
+/// Results carry a generation so canceled or superseded jobs cannot replace current state.
 pub enum LoadMessage {
     ActivityLoaded {
+        token: u64,
         path: PathBuf,
         result: Result<Analysis, String>,
     },
     ProgressLoaded {
+        token: u64,
         path: PathBuf,
-        result: Result<Analysis, String>,
+        result: Result<(Analysis, Option<Analysis>), String>,
     },
 }
 
 /// Main Inspector Application State.
 pub struct InspectorApp {
+    pub localizer: Arc<Localizer>,
+    request_token: u64,
     pub analysis: Option<Analysis>,
     pub original_analysis: Option<Analysis>,
     pub progress_analysis: Option<Analysis>,
@@ -155,6 +167,8 @@ impl InspectorApp {
         let (tx, rx) = channel();
 
         let mut app = Self {
+            localizer: Arc::new(Localizer::new()),
+            request_token: 0,
             analysis: None,
             original_analysis: None,
             progress_analysis: None,
@@ -173,7 +187,7 @@ impl InspectorApp {
 
             is_loading: false,
             loading_description: None,
-            status_message: Some("Ready".into()),
+            status_message: None,
             status_timestamp: Some(Instant::now()),
 
             preferences: Preferences::default(),
@@ -207,6 +221,11 @@ impl InspectorApp {
             ctx_ref.egui_ctx.set_visuals(visuals);
         }
 
+        app.set_status(
+            app.localizer
+                .text(&app.preferences.language, "status.ready"),
+        );
+
         // If an initial file was specified, load it
         if let Some(path) = initial_path {
             app.load_activity_background(path, cc.map(|c| c.egui_ctx.clone()));
@@ -218,9 +237,7 @@ impl InspectorApp {
     /// Key used to isolate manual checklist data per activity.
     pub fn activity_key(&self) -> String {
         if let Some(ref path) = self.activity_path {
-            path.file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| path.to_string_lossy().to_string())
+            canonical_identity(path).to_string_lossy().into_owned()
         } else {
             "default".to_string()
         }
@@ -231,7 +248,9 @@ impl InspectorApp {
         static DEFAULT_CHECKLIST: std::sync::LazyLock<ActivityChecklist> =
             std::sync::LazyLock::new(ActivityChecklist::default);
         let key = self.activity_key();
-        self.manual_checklists.get(&key).unwrap_or(&DEFAULT_CHECKLIST)
+        self.manual_checklists
+            .get(&key)
+            .unwrap_or(&DEFAULT_CHECKLIST)
     }
 
     /// Mutably get or create current activity's manual checklist.
@@ -244,7 +263,9 @@ impl InspectorApp {
     pub fn set_manual_check(&mut self, checkpoint_id: &str, checked: bool) {
         let checklist = self.current_checklist_mut();
         if checked {
-            checklist.checked_checkpoints.insert(checkpoint_id.to_string(), true);
+            checklist
+                .checked_checkpoints
+                .insert(checkpoint_id.to_string(), true);
         } else {
             checklist.checked_checkpoints.remove(checkpoint_id);
         }
@@ -262,7 +283,11 @@ impl InspectorApp {
 
     /// Total manual checks completed for the current activity.
     pub fn manual_check_count(&self) -> (usize, usize) {
-        let total = self.analysis.as_ref().map(|a| a.checkpoints.len()).unwrap_or(0);
+        let total = self
+            .analysis
+            .as_ref()
+            .map(|a| a.checkpoints.len())
+            .unwrap_or(0);
         let completed = if let Some(ref a) = self.analysis {
             let cl = self.current_checklist();
             a.checkpoints
@@ -281,19 +306,25 @@ impl InspectorApp {
         self.status_timestamp = Some(Instant::now());
     }
 
-    /// Load activity file in a background thread.
+    /// Only one load/comparison job runs at a time; clear invalidates its generation.
     pub fn load_activity_background(&mut self, path: PathBuf, ctx: Option<egui::Context>) {
+        if self.is_loading {
+            return;
+        }
+        self.request_token = self.request_token.wrapping_add(1);
+        let token = self.request_token;
         self.is_loading = true;
-        self.loading_description = Some(format!("Loading activity: {}", path.display()));
-        self.set_status(format!("Loading {}...", path.display()));
-
+        self.loading_description = Some(
+            self.localizer
+                .text(&self.preferences.language, "status.loading"),
+        );
         let tx = self.tx.clone();
-        let target_path = path.clone();
         std::thread::spawn(move || {
-            let res = inspector::load(&target_path).map_err(|e| format!("{:#}", e));
+            let result = inspector::load(&path).map_err(|e| format!("{e:#}"));
             let _ = tx.send(LoadMessage::ActivityLoaded {
-                path: target_path,
-                result: res,
+                token,
+                path,
+                result,
             });
             if let Some(ctx) = ctx {
                 ctx.request_repaint();
@@ -301,19 +332,32 @@ impl InspectorApp {
         });
     }
 
-    /// Load progress file in a background thread.
     pub fn load_progress_background(&mut self, path: PathBuf, ctx: Option<egui::Context>) {
+        if self.is_loading || self.original_analysis.is_none() {
+            return;
+        }
+        self.request_token = self.request_token.wrapping_add(1);
+        let token = self.request_token;
         self.is_loading = true;
-        self.loading_description = Some(format!("Loading progress: {}", path.display()));
-        self.set_status(format!("Loading progress {}...", path.display()));
-
+        self.loading_description = Some(
+            self.localizer
+                .text(&self.preferences.language, "status.loading"),
+        );
+        let mut activity = self.original_analysis.clone();
         let tx = self.tx.clone();
-        let target_path = path.clone();
         std::thread::spawn(move || {
-            let res = inspector::load(&target_path).map_err(|e| format!("{:#}", e));
+            let result = inspector::load(&path)
+                .map(|progress| {
+                    if let Some(ref mut activity) = activity {
+                        inspector::compare(activity, &progress);
+                    }
+                    (progress, activity)
+                })
+                .map_err(|e| format!("{e:#}"));
             let _ = tx.send(LoadMessage::ProgressLoaded {
-                path: target_path,
-                result: res,
+                token,
+                path,
+                result,
             });
             if let Some(ctx) = ctx {
                 ctx.request_repaint();
@@ -321,84 +365,107 @@ impl InspectorApp {
         });
     }
 
-    /// Reload the current activity file.
     pub fn reload_activity(&mut self, ctx: Option<egui::Context>) {
         if let Some(path) = self.activity_path.clone() {
             self.load_activity_background(path, ctx);
         }
     }
 
-    /// Drain background messages and update state.
     pub fn drain_messages(&mut self) {
+        let catalog = self.localizer.clone();
+        let language = self.preferences.language.clone();
+        let tf = |key: &str, values: &[(&str, &str)]| catalog.format(&language, key, values);
         while let Ok(msg) = self.rx.try_recv() {
+            let token = match &msg {
+                LoadMessage::ActivityLoaded { token, .. }
+                | LoadMessage::ProgressLoaded { token, .. } => *token,
+            };
+            if token != self.request_token {
+                continue;
+            }
             self.is_loading = false;
             self.loading_description = None;
             match msg {
-                LoadMessage::ActivityLoaded { path, result } => match result {
+                LoadMessage::ActivityLoaded { path, result, .. } => match result {
                     Ok(analysis) => {
                         let count = analysis.checkpoints.len();
                         self.activity_path = Some(path.clone());
-                        self.preferences.last_activity_path = Some(path.to_string_lossy().to_string());
+                        self.preferences.last_activity_path =
+                            Some(path.to_string_lossy().into_owned());
                         self.original_analysis = Some(analysis.clone());
-                        let mut act = analysis;
-
-                        // If a progress file was already loaded, compare against it immediately
-                        if let Some(ref prog) = self.progress_analysis {
-                            inspector::compare(&mut act, prog);
-                            self.set_status(format!(
-                                "Loaded {} ({} checkpoints) and compared with progress.",
-                                path.display(),
-                                count
-                            ));
-                        } else {
-                            self.set_status(format!(
-                                "Successfully loaded {} ({} checkpoints).",
-                                path.display(),
-                                count
-                            ));
-                        }
-                        self.analysis = Some(act);
+                        self.analysis = Some(analysis);
+                        self.progress_analysis = None;
+                        self.progress_path = None;
+                        self.preferences.last_progress_path = None;
+                        self.set_status(tf(
+                            "ui.successfully_loaded_value_value2_checkpoints",
+                            &[
+                                ("value", &format!("{}", path.display())),
+                                ("value2", &format!("{}", count)),
+                            ],
+                        ));
                     }
-                    Err(e) => {
-                        self.set_status(format!("Failed to load activity: {e}"));
-                    }
+                    Err(error) => self.set_status(tf(
+                        "ui.failed_to_load_activity_error",
+                        &[("error", &format!("{}", error))],
+                    )),
                 },
-                LoadMessage::ProgressLoaded { path, result } => match result {
-                    Ok(prog) => {
+                LoadMessage::ProgressLoaded { path, result, .. } => match result {
+                    Ok((progress, compared)) => {
                         self.progress_path = Some(path.clone());
-                        self.preferences.last_progress_path = Some(path.to_string_lossy().to_string());
-                        self.progress_analysis = Some(prog.clone());
-
-                        if let Some(ref mut act) = self.analysis {
-                            inspector::compare(act, &prog);
-                            let summary = act.summary();
-                            self.set_status(format!(
-                                "Progress compared: {} passed, {} failed, {} unverified.",
-                                summary.passed, summary.failed, summary.unverified
-                            ));
-                        } else {
-                            self.set_status(format!(
-                                "Loaded progress {}. Load an activity to compare.",
-                                path.display()
-                            ));
+                        self.preferences.last_progress_path =
+                            Some(path.to_string_lossy().into_owned());
+                        self.progress_analysis = Some(progress);
+                        if let Some(compared) = compared {
+                            self.analysis = Some(compared);
                         }
+                        self.set_status(
+                            self.localizer
+                                .text(&self.preferences.language, "status.progress_compared"),
+                        );
                     }
-                    Err(e) => {
-                        self.set_status(format!("Failed to load progress: {e}"));
-                    }
+                    Err(error) => self.set_status(tf(
+                        "ui.failed_to_load_progress_error",
+                        &[("error", &format!("{}", error))],
+                    )),
                 },
             }
         }
     }
 
-    /// Reset comparison and revert back to original activity analysis.
     pub fn clear_progress(&mut self) {
-        if let Some(orig) = &self.original_analysis {
-            self.analysis = Some(orig.clone());
-        }
+        let catalog = self.localizer.clone();
+        let language = self.preferences.language.clone();
+        let tr = |key: &str| catalog.text(&language, key);
+        self.request_token = self.request_token.wrapping_add(1);
+        self.is_loading = false;
+        self.loading_description = None;
+        self.analysis = self.original_analysis.clone();
         self.progress_analysis = None;
         self.progress_path = None;
-        self.set_status("Progress cleared. Showing original activity assessment.");
+        self.preferences.last_progress_path = None;
+        self.set_status(tr(
+            "ui.progress_cleared_showing_original_activity_assessment",
+        ));
+    }
+
+    /// Guard both loaded sources and Packet Tracer destinations before touching disk.
+    fn export_data(&self, path: &Path, data: impl AsRef<[u8]>) -> std::io::Result<()> {
+        let protected = path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("pka") || e.eq_ignore_ascii_case("pkt"))
+            || [&self.activity_path, &self.progress_path]
+                .into_iter()
+                .flatten()
+                .any(|source| canonical_identity(source) == canonical_identity(path));
+        if protected {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                self.localizer
+                    .text(&self.preferences.language, "error.source_export"),
+            ));
+        }
+        atomic_export(path, data.as_ref())
     }
 
     /// Get unique devices from current checkpoints.
@@ -478,7 +545,13 @@ impl InspectorApp {
                 }
 
                 // Manual unchecked filter
-                if manual_filter && checklist.checked_checkpoints.get(&c.id).copied().unwrap_or(false) {
+                if manual_filter
+                    && checklist
+                        .checked_checkpoints
+                        .get(&c.id)
+                        .copied()
+                        .unwrap_or(false)
+                {
                     return false;
                 }
 
@@ -489,7 +562,10 @@ impl InspectorApp {
                     let matches_iface = c.interface.to_lowercase().contains(&search);
                     let matches_prop = c.property.to_lowercase().contains(&search);
                     let matches_exp = c.expected.to_lowercase().contains(&search);
-                    let matches_curr = c.current.as_ref().is_some_and(|s| s.to_lowercase().contains(&search));
+                    let matches_curr = c
+                        .current
+                        .as_ref()
+                        .is_some_and(|s| s.to_lowercase().contains(&search));
                     let matches_expl = c.explanation.to_lowercase().contains(&search);
                     let matches_cat = c.category.to_lowercase().contains(&search);
 
@@ -513,13 +589,19 @@ impl InspectorApp {
     }
 
     /// Copy text to system clipboard via egui context.
-    pub fn copy_text_with_feedback(&mut self, ctx: &egui::Context, text: String, label: &str) {
+    pub fn copy_text_with_feedback(&mut self, ctx: &egui::Context, text: String, _label: &str) {
         ctx.copy_text(text);
-        self.set_status(format!("Copied {label} to clipboard."));
+        self.set_status(
+            self.localizer
+                .text(&self.preferences.language, "action.copied"),
+        );
     }
 
     /// Handle keyboard shortcuts.
     pub fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        let catalog = self.localizer.clone();
+        let language = self.preferences.language.clone();
+        let tr = |key: &str| catalog.text(&language, key);
         ctx.input(|i| {
             let ctrl = i.modifiers.command; // Ctrl on Windows/Linux, Cmd on Mac
             let shift = i.modifiers.shift;
@@ -527,8 +609,8 @@ impl InspectorApp {
             // Ctrl+O: Open Activity
             if ctrl && !shift && i.key_pressed(egui::Key::O) {
                 if let Some(path) = rfd::FileDialog::new()
-                    .add_filter("Packet Tracer (*.pka, *.pkt)", &["pka", "pkt"])
-                    .add_filter("All Files (*.*)", &["*"])
+                    .add_filter(tr("ui.packet_tracer_pka_pkt"), &["pka", "pkt"])
+                    .add_filter(tr("ui.all_files"), &["*"])
                     .pick_file()
                 {
                     self.load_activity_background(path, Some(ctx.clone()));
@@ -536,10 +618,12 @@ impl InspectorApp {
             }
 
             // Ctrl+P or Ctrl+Shift+O: Open Progress
-            if (ctrl && i.key_pressed(egui::Key::P)) || (ctrl && shift && i.key_pressed(egui::Key::O)) {
+            if (ctrl && i.key_pressed(egui::Key::P))
+                || (ctrl && shift && i.key_pressed(egui::Key::O))
+            {
                 if let Some(path) = rfd::FileDialog::new()
-                    .add_filter("Packet Tracer (*.pka, *.pkt)", &["pka", "pkt"])
-                    .add_filter("All Files (*.*)", &["*"])
+                    .add_filter(tr("ui.packet_tracer_pka_pkt"), &["pka", "pkt"])
+                    .add_filter(tr("ui.all_files"), &["*"])
                     .pick_file()
                 {
                     self.load_progress_background(path, Some(ctx.clone()));
@@ -583,18 +667,48 @@ impl InspectorApp {
 
     /// Render Top Panel (Toolbar, File Actions, Quick Summary).
     pub fn render_top_panel(&mut self, ctx: &egui::Context) {
+        let catalog = self.localizer.clone();
+        let language = self.preferences.language.clone();
+        let tr = |key: &str| catalog.text(&language, key);
+        let tf = |key: &str, values: &[(&str, &str)]| catalog.format(&language, key, values);
         egui::TopBottomPanel::top("top_panel")
-            .frame(egui::Frame::side_top_panel(&ctx.style()).inner_margin(egui::Margin::symmetric(12, 8)))
+            .frame(
+                egui::Frame::side_top_panel(&ctx.style())
+                    .inner_margin(egui::Margin::symmetric(12, 8)),
+            )
             .show(ctx, |ui| {
                 ui.horizontal_wrapped(|ui| {
-                    ui.heading("🔍 Packet Tracer Inspector");
+                    ui.heading(tr("app.title"));
+                    ui.label(tr("menu.language"));
+                    egui::ComboBox::from_id_salt("language_selector")
+                        .selected_text(
+                            self.localizer
+                                .languages()
+                                .into_iter()
+                                .find(|(code, _)| code == &self.preferences.language)
+                                .map(|(_, name)| name)
+                                .unwrap_or_else(|| self.preferences.language.clone()),
+                        )
+                        .show_ui(ui, |ui| {
+                            for (code, name) in self.localizer.languages() {
+                                if ui
+                                    .selectable_value(&mut self.preferences.language, code, name)
+                                    .changed()
+                                {
+                                    self.status_message = None;
+                                }
+                            }
+                        });
+                    if ui.small_button(tr("menu.reload_languages")).clicked() {
+                        self.localizer = Arc::new(Localizer::new());
+                    }
                     ui.separator();
 
                     // Open Activity button
-                    if ui.button("📂 Open Activity (Ctrl+O)").clicked() {
+                    if ui.button(tr("menu.open_file")).clicked() {
                         if let Some(path) = rfd::FileDialog::new()
-                            .add_filter("Packet Tracer (*.pka, *.pkt)", &["pka", "pkt"])
-                            .add_filter("All Files (*.*)", &["*"])
+                            .add_filter(tr("ui.packet_tracer_pka_pkt"), &["pka", "pkt"])
+                            .add_filter(tr("ui.all_files"), &["*"])
                             .pick_file()
                         {
                             self.load_activity_background(path, Some(ctx.clone()));
@@ -604,7 +718,7 @@ impl InspectorApp {
                     // Reload button
                     let reload_enabled = self.activity_path.is_some() && !self.is_loading;
                     if ui
-                        .add_enabled(reload_enabled, egui::Button::new("🔄 Reload (Ctrl+R)"))
+                        .add_enabled(reload_enabled, egui::Button::new(tr("menu.reload")))
                         .clicked()
                     {
                         self.reload_activity(Some(ctx.clone()));
@@ -615,12 +729,15 @@ impl InspectorApp {
                     // Open Progress button
                     let progress_enabled = self.analysis.is_some() && !self.is_loading;
                     if ui
-                        .add_enabled(progress_enabled, egui::Button::new("📥 Open Progress (Ctrl+P)"))
+                        .add_enabled(
+                            progress_enabled,
+                            egui::Button::new(tr("menu.open_progress")),
+                        )
                         .clicked()
                     {
                         if let Some(path) = rfd::FileDialog::new()
-                            .add_filter("Packet Tracer (*.pka, *.pkt)", &["pka", "pkt"])
-                            .add_filter("All Files (*.*)", &["*"])
+                            .add_filter(tr("ui.packet_tracer_pka_pkt"), &["pka", "pkt"])
+                            .add_filter(tr("ui.all_files"), &["*"])
                             .pick_file()
                         {
                             self.load_progress_background(path, Some(ctx.clone()));
@@ -629,7 +746,7 @@ impl InspectorApp {
 
                     // Clear progress button
                     if self.progress_analysis.is_some() {
-                        if ui.button("❌ Clear Progress").clicked() {
+                        if ui.button(tr("ui.clear_progress")).clicked() {
                             self.clear_progress();
                         }
                     }
@@ -638,58 +755,91 @@ impl InspectorApp {
 
                     // Export CSV
                     let export_enabled = self.analysis.is_some();
-                    if ui.add_enabled(export_enabled, egui::Button::new("📊 Export CSV")).clicked() {
+                    if ui
+                        .add_enabled(export_enabled, egui::Button::new(tr("menu.export_csv")))
+                        .clicked()
+                    {
                         if let Some(ref a) = self.analysis {
                             match reports::csv(a) {
                                 Ok(data) => {
                                     if let Some(path) = rfd::FileDialog::new()
-                                        .add_filter("CSV (*.csv)", &["csv"])
+                                        .add_filter(tr("ui.csv_csv"), &["csv"])
                                         .set_file_name("activity_report.csv")
                                         .save_file()
                                     {
-                                        if let Err(e) = std::fs::write(&path, data) {
-                                            self.set_status(format!("Error saving CSV: {e}"));
+                                        if let Err(e) = self.export_data(&path, data) {
+                                            self.set_status(tf(
+                                                "ui.error_saving_csv_e",
+                                                &[("e", &format!("{}", e))],
+                                            ));
                                         } else {
-                                            self.set_status(format!("Saved CSV to {}", path.display()));
+                                            self.set_status(tf(
+                                                "ui.saved_csv_to_value",
+                                                &[("value", &format!("{}", path.display()))],
+                                            ));
                                         }
                                     }
                                 }
-                                Err(e) => self.set_status(format!("Failed to generate CSV: {e}")),
+                                Err(e) => self.set_status(tf(
+                                    "ui.failed_to_generate_csv_e",
+                                    &[("e", &format!("{}", e))],
+                                )),
                             }
                         }
                     }
 
                     // Export Markdown
-                    if ui.add_enabled(export_enabled, egui::Button::new("📝 Export Markdown")).clicked() {
+                    if ui
+                        .add_enabled(
+                            export_enabled,
+                            egui::Button::new(tr("menu.export_markdown")),
+                        )
+                        .clicked()
+                    {
                         if let Some(ref a) = self.analysis {
                             let data = reports::markdown(a);
                             if let Some(path) = rfd::FileDialog::new()
-                                .add_filter("Markdown (*.md)", &["md"])
+                                .add_filter(tr("ui.markdown_md"), &["md"])
                                 .set_file_name("activity_report.md")
                                 .save_file()
                             {
-                                if let Err(e) = std::fs::write(&path, data) {
-                                    self.set_status(format!("Error saving Markdown: {e}"));
+                                if let Err(e) = self.export_data(&path, data) {
+                                    self.set_status(tf(
+                                        "ui.error_saving_markdown_e",
+                                        &[("e", &format!("{}", e))],
+                                    ));
                                 } else {
-                                    self.set_status(format!("Saved Markdown to {}", path.display()));
+                                    self.set_status(tf(
+                                        "ui.saved_markdown_to_value",
+                                        &[("value", &format!("{}", path.display()))],
+                                    ));
                                 }
                             }
                         }
                     }
 
                     // Export CLI Script
-                    if ui.add_enabled(export_enabled, egui::Button::new("💻 Export CLI Script")).clicked() {
+                    if ui
+                        .add_enabled(export_enabled, egui::Button::new(tr("menu.export_cli")))
+                        .clicked()
+                    {
                         if let Some(ref a) = self.analysis {
                             let script = commands::device_script(&a.checkpoints, None);
                             if let Some(path) = rfd::FileDialog::new()
-                                .add_filter("CLI Script (*.txt, *.ios)", &["txt", "ios", "cli"])
+                                .add_filter(tr("ui.cli_script_txt_ios"), &["txt", "ios", "cli"])
                                 .set_file_name("device_commands.txt")
                                 .save_file()
                             {
-                                if let Err(e) = std::fs::write(&path, script) {
-                                    self.set_status(format!("Error saving CLI script: {e}"));
+                                if let Err(e) = self.export_data(&path, script) {
+                                    self.set_status(tf(
+                                        "ui.error_saving_cli_script_e",
+                                        &[("e", &format!("{}", e))],
+                                    ));
                                 } else {
-                                    self.set_status(format!("Saved CLI script to {}", path.display()));
+                                    self.set_status(tf(
+                                        "ui.saved_cli_script_to_value",
+                                        &[("value", &format!("{}", path.display()))],
+                                    ));
                                 }
                             }
                         }
@@ -699,30 +849,39 @@ impl InspectorApp {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if let Some(ref a) = self.analysis {
                             let s = a.summary();
-                            ui.label(format!("Score: {:.1}/{:.1}", s.verified_score, s.total_score));
+                            ui.label(tf(
+                                "ui.score_value_value2",
+                                &[
+                                    ("value", &format!("{:.1}", s.verified_score)),
+                                    ("value2", &format!("{:.1}", s.total_score)),
+                                ],
+                            ));
                             ui.separator();
 
                             // Unverified badge
                             ui.colored_label(
                                 egui::Color32::from_rgb(255, 179, 0),
-                                format!("{} Unverified", s.unverified),
+                                tf(
+                                    "ui.value_unverified",
+                                    &[("value", &format!("{}", s.unverified))],
+                                ),
                             );
 
                             // Failed badge
                             ui.colored_label(
                                 egui::Color32::from_rgb(244, 67, 54),
-                                format!("{} Failed", s.failed),
+                                tf("ui.value_failed", &[("value", &format!("{}", s.failed))]),
                             );
 
                             // Passed badge
                             ui.colored_label(
                                 egui::Color32::from_rgb(76, 175, 80),
-                                format!("{} Passed", s.passed),
+                                tf("ui.value_passed", &[("value", &format!("{}", s.passed))]),
                             );
 
-                            ui.label(format!("Total: {}", s.total));
+                            ui.label(tf("ui.total_value", &[("value", &format!("{}", s.total))]));
                         } else {
-                            ui.label("No file loaded");
+                            ui.label(tr("status.no_file"));
                         }
                     });
                 });
@@ -731,6 +890,10 @@ impl InspectorApp {
 
     /// Render Left Panel (Filters, Navigation, Activity Checklist).
     pub fn render_side_panel(&mut self, ctx: &egui::Context) {
+        let catalog = self.localizer.clone();
+        let language = self.preferences.language.clone();
+        let tr = |key: &str| catalog.text(&language, key);
+        let tf = |key: &str, values: &[(&str, &str)]| catalog.format(&language, key, values);
         egui::SidePanel::left("side_panel")
             .resizable(true)
             .default_width(280.0)
@@ -738,14 +901,14 @@ impl InspectorApp {
             .frame(egui::Frame::side_top_panel(&ctx.style()).inner_margin(egui::Margin::same(12)))
             .show(ctx, |ui| {
                 ui.vertical(|ui| {
-                    ui.strong("🔎 Search & Filters");
+                    ui.strong(tr("ui.search_filters"));
                     ui.add_space(4.0);
 
                     // Search box
                     ui.horizontal(|ui| {
                         let _search_edit = ui.add(
                             egui::TextEdit::singleline(&mut self.search_query)
-                                .hint_text("Search checkpoints, devices... (Esc)"),
+                                .hint_text(tr("filter.search")),
                         );
                         if !self.search_query.is_empty() && ui.small_button("✕").clicked() {
                             self.search_query.clear();
@@ -757,27 +920,59 @@ impl InspectorApp {
                     ui.add_space(4.0);
 
                     // Status filter
-                    ui.strong("Status Filter");
-                    let total_passed = self.analysis.as_ref().map(|a| a.summary().passed).unwrap_or(0);
-                    let total_failed = self.analysis.as_ref().map(|a| a.summary().failed).unwrap_or(0);
-                    let total_unverified = self.analysis.as_ref().map(|a| a.summary().unverified).unwrap_or(0);
-                    let total_all = self.analysis.as_ref().map(|a| a.checkpoints.len()).unwrap_or(0);
+                    ui.strong(tr("ui.status_filter"));
+                    let total_passed = self
+                        .analysis
+                        .as_ref()
+                        .map(|a| a.summary().passed)
+                        .unwrap_or(0);
+                    let total_failed = self
+                        .analysis
+                        .as_ref()
+                        .map(|a| a.summary().failed)
+                        .unwrap_or(0);
+                    let total_unverified = self
+                        .analysis
+                        .as_ref()
+                        .map(|a| a.summary().unverified)
+                        .unwrap_or(0);
+                    let total_all = self
+                        .analysis
+                        .as_ref()
+                        .map(|a| a.checkpoints.len())
+                        .unwrap_or(0);
 
-                    ui.radio_value(&mut self.status_filter, StatusFilter::All, format!("All ({total_all})"));
+                    ui.radio_value(
+                        &mut self.status_filter,
+                        StatusFilter::All,
+                        tf(
+                            "ui.all_total_all",
+                            &[("total_all", &format!("{}", total_all))],
+                        ),
+                    );
                     ui.radio_value(
                         &mut self.status_filter,
                         StatusFilter::Passed,
-                        format!("Passed ({total_passed})"),
+                        tf(
+                            "ui.passed_total_passed",
+                            &[("total_passed", &format!("{}", total_passed))],
+                        ),
                     );
                     ui.radio_value(
                         &mut self.status_filter,
                         StatusFilter::Failed,
-                        format!("Failed ({total_failed})"),
+                        tf(
+                            "ui.failed_total_failed",
+                            &[("total_failed", &format!("{}", total_failed))],
+                        ),
                     );
                     ui.radio_value(
                         &mut self.status_filter,
                         StatusFilter::Unverified,
-                        format!("Unverified ({total_unverified})"),
+                        tf(
+                            "ui.unverified_total_unverified",
+                            &[("total_unverified", &format!("{}", total_unverified))],
+                        ),
                     );
 
                     ui.add_space(8.0);
@@ -785,18 +980,21 @@ impl InspectorApp {
                     ui.add_space(4.0);
 
                     // Device Filter
-                    ui.strong("Device Filter");
+                    ui.strong(tr("ui.device_filter"));
                     let devices = self.unique_devices();
                     let current_device_label = self
                         .selected_device
-                        .as_deref()
-                        .unwrap_or("All Devices");
+                        .clone()
+                        .unwrap_or_else(|| tr("filter.all_devices"));
 
                     egui::ComboBox::from_id_salt("device_filter_combo")
                         .selected_text(current_device_label)
                         .show_ui(ui, |ui| {
                             if ui
-                                .selectable_label(self.selected_device.is_none(), "All Devices")
+                                .selectable_label(
+                                    self.selected_device.is_none(),
+                                    tr("filter.all_devices"),
+                                )
                                 .clicked()
                             {
                                 self.selected_device = None;
@@ -812,18 +1010,21 @@ impl InspectorApp {
                     ui.add_space(8.0);
 
                     // Category Filter
-                    ui.strong("Category Filter");
+                    ui.strong(tr("ui.category_filter"));
                     let categories = self.unique_categories();
                     let current_category_label = self
                         .selected_category
-                        .as_deref()
-                        .unwrap_or("All Categories");
+                        .clone()
+                        .unwrap_or_else(|| tr("filter.all_categories"));
 
                     egui::ComboBox::from_id_salt("category_filter_combo")
                         .selected_text(current_category_label)
                         .show_ui(ui, |ui| {
                             if ui
-                                .selectable_label(self.selected_category.is_none(), "All Categories")
+                                .selectable_label(
+                                    self.selected_category.is_none(),
+                                    tr("ui.all_categories"),
+                                )
                                 .clicked()
                             {
                                 self.selected_category = None;
@@ -841,19 +1042,28 @@ impl InspectorApp {
                     ui.add_space(4.0);
 
                     // Manual Checklist Section (Activity Keyed)
-                    ui.strong("📋 Activity Checklist");
+                    ui.strong(tr("ui.activity_checklist"));
                     let (completed_checks, total_checks) = self.manual_check_count();
-                    ui.label(format!("{completed_checks} / {total_checks} completed"));
+                    ui.label(tf(
+                        "ui.completed_checks_total_checks_completed",
+                        &[
+                            ("completed_checks", &format!("{}", completed_checks)),
+                            ("total_checks", &format!("{}", total_checks)),
+                        ],
+                    ));
 
                     ui.checkbox(
                         &mut self.preferences.show_only_manual_unchecked,
-                        "Show only unchecked",
+                        tr("ui.show_only_unchecked"),
                     );
 
-                    if ui.small_button("Clear Checklist for Activity").clicked() {
+                    if ui
+                        .small_button(tr("ui.clear_checklist_for_activity"))
+                        .clicked()
+                    {
                         let key = self.activity_key();
                         self.manual_checklists.remove(&key);
-                        self.set_status("Activity checklist reset.");
+                        self.set_status(tr("ui.activity_checklist_reset"));
                     }
 
                     ui.add_space(8.0);
@@ -861,23 +1071,41 @@ impl InspectorApp {
                     ui.add_space(4.0);
 
                     // Preferences
-                    ui.strong("⚙ View Options");
-                    ui.checkbox(&mut self.preferences.compact_view, "Compact rows");
+                    ui.strong(tr("ui.view_options"));
+                    ui.checkbox(&mut self.preferences.compact_view, tr("ui.compact_rows"));
 
                     ui.add_space(12.0);
                     // Active files info
                     ui.separator();
                     ui.add_space(4.0);
-                    ui.strong("📁 Loaded Files");
+                    ui.strong(tr("ui.loaded_files"));
                     if let Some(ref path) = self.activity_path {
-                        ui.label(format!("Activity:\n{}", path.file_name().unwrap_or_default().to_string_lossy()));
+                        ui.label(tf(
+                            "ui.activity_value",
+                            &[(
+                                "value",
+                                &format!(
+                                    "{}",
+                                    path.file_name().unwrap_or_default().to_string_lossy()
+                                ),
+                            )],
+                        ));
                     } else {
-                        ui.label("Activity: None");
+                        ui.label(tr("ui.activity_none"));
                     }
 
                     if let Some(ref path) = self.progress_path {
                         ui.add_space(4.0);
-                        ui.label(format!("Progress:\n{}", path.file_name().unwrap_or_default().to_string_lossy()));
+                        ui.label(tf(
+                            "ui.progress_value",
+                            &[(
+                                "value",
+                                &format!(
+                                    "{}",
+                                    path.file_name().unwrap_or_default().to_string_lossy()
+                                ),
+                            )],
+                        ));
                     }
                 });
             });
@@ -885,29 +1113,42 @@ impl InspectorApp {
 
     /// Render Status Bar (Bottom Panel).
     pub fn render_bottom_panel(&mut self, ctx: &egui::Context) {
+        let catalog = self.localizer.clone();
+        let language = self.preferences.language.clone();
+        let tr = |key: &str| catalog.text(&language, key);
+        let tf = |key: &str, values: &[(&str, &str)]| catalog.format(&language, key, values);
         let filtered_count = self.filtered_checkpoint_indices().len();
-        let total_count = self.analysis.as_ref().map(|a| a.checkpoints.len()).unwrap_or(0);
+        let total_count = self
+            .analysis
+            .as_ref()
+            .map(|a| a.checkpoints.len())
+            .unwrap_or(0);
 
         egui::TopBottomPanel::bottom("status_bar")
-            .frame(egui::Frame::side_top_panel(&ctx.style()).inner_margin(egui::Margin::symmetric(12, 6)))
+            .frame(
+                egui::Frame::side_top_panel(&ctx.style())
+                    .inner_margin(egui::Margin::symmetric(12, 6)),
+            )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     if self.is_loading {
                         ui.spinner();
-                        if let Some(ref desc) = self.loading_description {
-                            ui.label(desc);
-                        } else {
-                            ui.label("Loading...");
-                        }
+                        ui.label(tr("status.loading"));
                     } else if let Some(ref msg) = self.status_message {
                         ui.label(msg);
                     } else {
-                        ui.label("Ready");
+                        ui.label(tr("status.ready"));
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if total_count > 0 {
-                            ui.label(format!("Showing {filtered_count} of {total_count} checkpoints"));
+                            ui.label(tf(
+                                "ui.showing_filtered_count_of_total_count_checkpoints",
+                                &[
+                                    ("filtered_count", &format!("{}", filtered_count)),
+                                    ("total_count", &format!("{}", total_count)),
+                                ],
+                            ));
                         }
                     });
                 });
@@ -916,12 +1157,15 @@ impl InspectorApp {
 
     /// Render Central Panel with Tabs.
     pub fn render_central_panel(&mut self, ctx: &egui::Context) {
+        let catalog = self.localizer.clone();
+        let language = self.preferences.language.clone();
+        let tr = |key: &str| catalog.text(&language, key);
         egui::CentralPanel::default().show(ctx, |ui| {
             // Tab bar
             ui.horizontal(|ui| {
                 for tab in Tab::ALL {
                     let is_active = self.current_tab == tab;
-                    let text = format!("{} ({})", tab.title(), tab.shortcut());
+                    let text = format!("{} ({})", tr(tab.title()), tab.shortcut());
                     if ui.selectable_label(is_active, text).clicked() {
                         self.current_tab = tab;
                         self.preferences.active_tab = tab;
@@ -934,14 +1178,14 @@ impl InspectorApp {
             if self.analysis.is_none() {
                 ui.vertical_centered(|ui| {
                     ui.add_space(60.0);
-                    ui.heading("Welcome to Packet Tracer Inspector");
+                    ui.heading(tr("empty.welcome"));
                     ui.add_space(8.0);
-                    ui.label("Load a Cisco Packet Tracer activity (.pka) or network file (.pkt) to inspect assessment items, generate device CLI commands, and compare student progress.");
+                    ui.label(tr("empty.description"));
                     ui.add_space(16.0);
-                    if ui.button("📂 Open Activity File (Ctrl+O)").clicked() {
+                    if ui.button(tr("menu.open_file")).clicked() {
                         if let Some(path) = rfd::FileDialog::new()
-                            .add_filter("Packet Tracer (*.pka, *.pkt)", &["pka", "pkt"])
-                            .add_filter("All Files (*.*)", &["*"])
+                            .add_filter(tr("ui.packet_tracer_pka_pkt"), &["pka", "pkt"])
+                            .add_filter(tr("ui.all_files"), &["*"])
                             .pick_file()
                         {
                             self.load_activity_background(path, Some(ctx.clone()));
@@ -965,13 +1209,19 @@ impl InspectorApp {
 
     /// Tab 1: Overview
     pub fn render_overview_tab(&mut self, ui: &mut egui::Ui) {
+        let catalog = self.localizer.clone();
+        let language = self.preferences.language.clone();
+        let tr = |key: &str| catalog.text(&language, key);
+        let tf = |key: &str, values: &[(&str, &str)]| catalog.format(&language, key, values);
         let Some(ref a) = self.analysis else { return };
         let s = a.summary();
         let timings = a.timings.clone();
 
         let mut device_stats: BTreeMap<String, (usize, usize, usize, usize, f64)> = BTreeMap::new();
         for c in &a.checkpoints {
-            let entry = device_stats.entry(c.device.clone()).or_insert((0, 0, 0, 0, 0.0));
+            let entry = device_stats
+                .entry(c.device.clone())
+                .or_insert((0, 0, 0, 0, 0.0));
             entry.0 += 1; // total
             match c.status {
                 Status::Passed => entry.1 += 1,
@@ -986,48 +1236,89 @@ impl InspectorApp {
 
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.add_space(8.0);
-            ui.heading("Assessment Overview");
+            ui.heading(tr("ui.assessment_overview"));
             ui.add_space(8.0);
 
             // Metrics cards in a row
             ui.horizontal(|ui| {
                 // Card 1: Checkpoints
-                egui::Frame::group(ui.style()).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
-                    ui.vertical(|ui| {
-                        ui.label("Checkpoints");
-                        ui.heading(format!("{}", s.total));
-                        ui.label(format!("Passed: {} | Failed: {} | Unverified: {}", s.passed, s.failed, s.unverified));
+                egui::Frame::group(ui.style())
+                    .inner_margin(egui::Margin::same(12))
+                    .show(ui, |ui| {
+                        ui.vertical(|ui| {
+                            ui.label(tr("nav.checkpoints"));
+                            ui.heading(format!("{}", s.total));
+                            ui.label(tf(
+                                "ui.passed_value_failed_value2_unverified_value3",
+                                &[
+                                    ("value", &format!("{}", s.passed)),
+                                    ("value2", &format!("{}", s.failed)),
+                                    ("value3", &format!("{}", s.unverified)),
+                                ],
+                            ));
+                        });
                     });
-                });
 
                 // Card 2: Score
-                egui::Frame::group(ui.style()).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
-                    ui.vertical(|ui| {
-                        ui.label("Verified Score");
-                        ui.heading(format!("{:.1} / {:.1} pts", s.verified_score, s.total_score));
-                        let pct = if s.total_score > 0.0 { s.verified_score / s.total_score * 100.0 } else { 0.0 };
-                        ui.label(format!("{:.1}% score achieved", pct));
+                egui::Frame::group(ui.style())
+                    .inner_margin(egui::Margin::same(12))
+                    .show(ui, |ui| {
+                        ui.vertical(|ui| {
+                            ui.label(tr("score.verified"));
+                            ui.heading(tf(
+                                "ui.value_value2_pts",
+                                &[
+                                    ("value", &format!("{:.1}", s.verified_score)),
+                                    ("value2", &format!("{:.1}", s.total_score)),
+                                ],
+                            ));
+                            let pct = if s.total_score > 0.0 {
+                                s.verified_score / s.total_score * 100.0
+                            } else {
+                                0.0
+                            };
+                            ui.label(tf(
+                                "ui.value_score_achieved",
+                                &[("value", &format!("{:.1}", pct))],
+                            ));
+                        });
                     });
-                });
 
                 // Card 3: Verification Coverage
-                egui::Frame::group(ui.style()).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
-                    ui.vertical(|ui| {
-                        ui.label("Verification Coverage");
-                        ui.heading(format!("{:.1}%", s.coverage * 100.0));
-                        ui.label(format!("{} verified of {}", s.passed + s.failed, s.total));
+                egui::Frame::group(ui.style())
+                    .inner_margin(egui::Margin::same(12))
+                    .show(ui, |ui| {
+                        ui.vertical(|ui| {
+                            ui.label(tr("score.coverage"));
+                            ui.heading(format!("{:.1}%", s.coverage * 100.0));
+                            ui.label(tf(
+                                "ui.value_verified_of_value2",
+                                &[
+                                    ("value", &format!("{}", s.passed + s.failed)),
+                                    ("value2", &format!("{}", s.total)),
+                                ],
+                            ));
+                        });
                     });
-                });
 
                 // Card 4: Manual Checklist
-                egui::Frame::group(ui.style()).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
-                    ui.vertical(|ui| {
-                        ui.label("Manual Checklist");
-                        ui.heading(format!("{checked} / {total}"));
-                        let pct = if total > 0 { checked as f64 / total as f64 * 100.0 } else { 0.0 };
-                        ui.label(format!("{:.1}% verified by you", pct));
+                egui::Frame::group(ui.style())
+                    .inner_margin(egui::Margin::same(12))
+                    .show(ui, |ui| {
+                        ui.vertical(|ui| {
+                            ui.label(tr("score.manual"));
+                            ui.heading(format!("{checked} / {total}"));
+                            let pct = if total > 0 {
+                                checked as f64 / total as f64 * 100.0
+                            } else {
+                                0.0
+                            };
+                            ui.label(tf(
+                                "ui.value_verified_by_you",
+                                &[("value", &format!("{:.1}", pct))],
+                            ));
+                        });
                     });
-                });
             });
 
             ui.add_space(16.0);
@@ -1035,24 +1326,28 @@ impl InspectorApp {
             ui.add_space(8.0);
 
             // Device summary breakdown table
-            ui.heading("Per-Device Breakdown");
+            ui.heading(tr("ui.per_device_breakdown"));
             ui.add_space(6.0);
 
             egui::Grid::new("device_overview_grid")
                 .striped(true)
                 .min_col_width(120.0)
                 .show(ui, |ui| {
-                    ui.strong("Device");
-                    ui.strong("Total");
-                    ui.strong("Passed");
-                    ui.strong("Failed");
-                    ui.strong("Unverified");
-                    ui.strong("Points");
-                    ui.strong("Action");
+                    ui.strong(tr("table.device"));
+                    ui.strong(tr("ui.total"));
+                    ui.strong(tr("status.passed"));
+                    ui.strong(tr("status.failed"));
+                    ui.strong(tr("status.unverified"));
+                    ui.strong(tr("table.points"));
+                    ui.strong(tr("ui.action"));
                     ui.end_row();
 
                     for (dev, (tot, pass, fail, unver, pts)) in &device_stats {
-                        let dev_name = if dev.is_empty() { "(General / Unassigned)" } else { dev.as_str() };
+                        let dev_name = if dev.is_empty() {
+                            tr("table.unassigned")
+                        } else {
+                            dev.clone()
+                        };
                         ui.label(dev_name);
                         ui.label(tot.to_string());
                         ui.colored_label(egui::Color32::from_rgb(76, 175, 80), pass.to_string());
@@ -1060,7 +1355,7 @@ impl InspectorApp {
                         ui.colored_label(egui::Color32::from_rgb(255, 179, 0), unver.to_string());
                         ui.label(format!("{pts:.1}"));
 
-                        if ui.small_button("View Checkpoints").clicked() {
+                        if ui.small_button(tr("ui.view_checkpoints")).clicked() {
                             select_device = Some(dev.clone());
                         }
                         ui.end_row();
@@ -1072,19 +1367,27 @@ impl InspectorApp {
             ui.add_space(8.0);
 
             // Performance and parse timings
-            ui.heading("Timings & Profiling");
+            ui.heading(tr("info.timings"));
             ui.add_space(6.0);
-            egui::Grid::new("timings_grid").striped(true).show(ui, |ui| {
-                ui.strong("Phase");
-                ui.strong("Elapsed Time");
-                ui.end_row();
-
-                for (phase, duration) in &timings {
-                    ui.label(phase);
-                    ui.label(format!("{:.3} s ({:.1} ms)", duration, duration * 1000.0));
+            egui::Grid::new("timings_grid")
+                .striped(true)
+                .show(ui, |ui| {
+                    ui.strong(tr("ui.phase"));
+                    ui.strong(tr("ui.elapsed_time"));
                     ui.end_row();
-                }
-            });
+
+                    for (phase, duration) in &timings {
+                        ui.label(self.localizer.message(&self.preferences.language, phase));
+                        ui.label(tf(
+                            "ui.value_s_value2_ms",
+                            &[
+                                ("value", &format!("{:.3}", duration)),
+                                ("value2", &format!("{:.1}", duration * 1000.0)),
+                            ],
+                        ));
+                        ui.end_row();
+                    }
+                });
         });
 
         if let Some(dev) = select_device {
@@ -1095,6 +1398,10 @@ impl InspectorApp {
 
     /// Tab 2: Checkpoints with virtualized row rendering
     pub fn render_checkpoints_tab(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let catalog = self.localizer.clone();
+        let language = self.preferences.language.clone();
+        let tr = |key: &str| catalog.text(&language, key);
+        let tf = |key: &str, values: &[(&str, &str)]| catalog.format(&language, key, values);
         let filtered_indices = self.filtered_checkpoint_indices();
         let total_filtered = filtered_indices.len();
         let compact = self.preferences.compact_view;
@@ -1105,8 +1412,11 @@ impl InspectorApp {
         let mut to_copy: Option<(String, &'static str)> = None;
 
         ui.horizontal(|ui| {
-            ui.label(format!("{total_filtered} checkpoints matching filters"));
-            if ui.button("Copy CSV of Filtered").clicked() {
+            ui.label(tf(
+                "ui.total_filtered_checkpoints_matching_filters",
+                &[("total_filtered", &format!("{}", total_filtered))],
+            ));
+            if ui.button(tr("ui.copy_csv_of_filtered")).clicked() {
                 copy_filtered_csv = true;
             }
         });
@@ -1115,13 +1425,16 @@ impl InspectorApp {
         if copy_filtered_csv {
             if let Some(ref a) = self.analysis {
                 let sub_analysis = Analysis {
-                    checkpoints: filtered_indices.iter().map(|&i| a.checkpoints[i].clone()).collect(),
+                    checkpoints: filtered_indices
+                        .iter()
+                        .map(|&i| a.checkpoints[i].clone())
+                        .collect(),
                     diagnostics: Vec::new(),
                     xml: String::new(),
                     timings: Vec::new(),
                 };
                 if let Ok(csv_text) = reports::csv(&sub_analysis) {
-                    to_copy = Some((csv_text, "filtered CSV"));
+                    to_copy = Some((csv_text, ""));
                 }
             }
         }
@@ -1136,8 +1449,16 @@ impl InspectorApp {
                 .show_rows(ui, row_height, total_filtered, |ui, row_range| {
                     for &idx in &filtered_indices[row_range] {
                         let c = &a.checkpoints[idx];
-                        let is_expanded = self.expanded_checkpoint_ids.get(&c.id).copied().unwrap_or(false);
-                        let mut is_checked = checklist.checked_checkpoints.get(&c.id).copied().unwrap_or(false);
+                        let is_expanded = self
+                            .expanded_checkpoint_ids
+                            .get(&c.id)
+                            .copied()
+                            .unwrap_or(false);
+                        let mut is_checked = checklist
+                            .checked_checkpoints
+                            .get(&c.id)
+                            .copied()
+                            .unwrap_or(false);
 
                         egui::Frame::group(ui.style())
                             .inner_margin(egui::Margin::symmetric(10, 6))
@@ -1150,9 +1471,18 @@ impl InspectorApp {
 
                                     // Status pill
                                     let (status_text, status_color) = match c.status {
-                                        Status::Passed => ("PASSED", egui::Color32::from_rgb(76, 175, 80)),
-                                        Status::Failed => ("FAILED", egui::Color32::from_rgb(244, 67, 54)),
-                                        Status::Unverified => ("UNVERIFIED", egui::Color32::from_rgb(255, 179, 0)),
+                                        Status::Passed => (
+                                            tr("status.passed"),
+                                            egui::Color32::from_rgb(76, 175, 80),
+                                        ),
+                                        Status::Failed => (
+                                            tr("status.failed"),
+                                            egui::Color32::from_rgb(244, 67, 54),
+                                        ),
+                                        Status::Unverified => (
+                                            tr("status.unverified"),
+                                            egui::Color32::from_rgb(255, 179, 0),
+                                        ),
                                     };
                                     ui.colored_label(status_color, format!("[{status_text}]"));
 
@@ -1170,33 +1500,61 @@ impl InspectorApp {
                                     ui.label("•");
 
                                     // Expected vs Current
-                                    ui.label(format!("Expected: {}", c.expected));
+                                    ui.label(tf(
+                                        "ui.expected_value",
+                                        &[("value", &format!("{}", c.expected))],
+                                    ));
                                     if let Some(ref curr) = c.current {
-                                        ui.label(format!("| Current: {curr}"));
+                                        ui.label(tf(
+                                            "ui.current_curr",
+                                            &[("curr", &format!("{}", curr))],
+                                        ));
                                     }
 
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        // Expand/collapse button
-                                        let expand_label = if is_expanded { "▲ Less" } else { "▼ More" };
-                                        if ui.small_button(expand_label).clicked() {
-                                            toggle_expand = Some(c.id.clone());
-                                        }
-
-                                        // Copy CLI button
-                                        if ui.small_button("📋 Copy CLI").clicked() {
-                                            let cmd = commands::generate(c);
-                                            let text_to_copy = if cmd.supported && !cmd.gui {
-                                                cmd.text
-                                            } else if cmd.gui {
-                                                format!("GUI step required: {}", cmd.text)
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            // Expand/collapse button
+                                            let expand_label = if is_expanded {
+                                                tr("ui.less")
                                             } else {
-                                                format!("! {}", cmd.explanation)
+                                                tr("ui.more")
                                             };
-                                            to_copy = Some((text_to_copy, "checkpoint CLI command"));
-                                        }
+                                            if ui.small_button(expand_label).clicked() {
+                                                toggle_expand = Some(c.id.clone());
+                                            }
 
-                                        ui.label(format!("{:.1} pts", c.weight));
-                                    });
+                                            // Copy CLI button
+                                            if ui
+                                                .small_button(tr("action.copy_checkpoint"))
+                                                .clicked()
+                                            {
+                                                let cmd = commands::generate(c);
+                                                let text_to_copy = if cmd.supported && !cmd.gui {
+                                                    cmd.text
+                                                } else if cmd.gui {
+                                                    tf(
+                                                        "ui.gui_step_required_value",
+                                                        &[("value", &format!("{}", cmd.text))],
+                                                    )
+                                                } else {
+                                                    format!(
+                                                        "! {}",
+                                                        self.localizer.message(
+                                                            &self.preferences.language,
+                                                            &cmd.explanation
+                                                        )
+                                                    )
+                                                };
+                                                to_copy = Some((text_to_copy, ""));
+                                            }
+
+                                            ui.label(tf(
+                                                "ui.value_pts",
+                                                &[("value", &format!("{:.1}", c.weight))],
+                                            ));
+                                        },
+                                    );
                                 });
 
                                 // Expanded detail view
@@ -1209,24 +1567,27 @@ impl InspectorApp {
                                         .num_columns(2)
                                         .spacing([12.0, 4.0])
                                         .show(ui, |ui| {
-                                            ui.strong("ID:");
+                                            ui.strong(tr("table.id"));
                                             ui.label(&c.id);
                                             ui.end_row();
 
-                                            ui.strong("Category:");
+                                            ui.strong(tr("table.category"));
                                             ui.label(&c.category);
                                             ui.end_row();
 
-                                            ui.strong("Path:");
+                                            ui.strong(tr("detail.path"));
                                             ui.label(&c.path);
                                             ui.end_row();
 
-                                            ui.strong("Explanation:");
-                                            ui.label(&c.explanation);
+                                            ui.strong(tr("detail.explanation"));
+                                            ui.label(self.localizer.message(
+                                                &self.preferences.language,
+                                                &c.explanation,
+                                            ));
                                             ui.end_row();
 
                                             if !c.evidence.is_empty() {
-                                                ui.strong("Evidence:");
+                                                ui.strong(tr("detail.evidence"));
                                                 ui.vertical(|ui| {
                                                     for ev in &c.evidence {
                                                         ui.label(format!("• {ev}"));
@@ -1237,14 +1598,35 @@ impl InspectorApp {
 
                                             // Command preview
                                             let cmd = commands::generate(c);
-                                            ui.strong("Remediation CLI:");
+                                            ui.strong(tr("detail.preview"));
                                             ui.vertical(|ui| {
                                                 if cmd.supported && !cmd.gui {
                                                     ui.monospace(&cmd.text);
                                                 } else if cmd.gui {
-                                                    ui.colored_label(egui::Color32::LIGHT_BLUE, format!("GUI: {}", cmd.text));
+                                                    ui.colored_label(
+                                                        egui::Color32::LIGHT_BLUE,
+                                                        tf(
+                                                            "ui.gui_value",
+                                                            &[("value", &format!("{}", cmd.text))],
+                                                        ),
+                                                    );
                                                 } else {
-                                                    ui.colored_label(egui::Color32::LIGHT_RED, format!("Unsupported: {}", cmd.explanation));
+                                                    ui.colored_label(
+                                                        egui::Color32::LIGHT_RED,
+                                                        tf(
+                                                            "ui.unsupported_value",
+                                                            &[(
+                                                                "value",
+                                                                &format!(
+                                                                    "{}",
+                                                                    self.localizer.message(
+                                                                        &self.preferences.language,
+                                                                        &cmd.explanation
+                                                                    )
+                                                                ),
+                                                            )],
+                                                        ),
+                                                    );
                                                 }
                                             });
                                             ui.end_row();
@@ -1260,7 +1642,11 @@ impl InspectorApp {
             self.set_manual_check(&id, checked);
         }
         if let Some(id) = toggle_expand {
-            let current = self.expanded_checkpoint_ids.get(&id).copied().unwrap_or(false);
+            let current = self
+                .expanded_checkpoint_ids
+                .get(&id)
+                .copied()
+                .unwrap_or(false);
             self.expanded_checkpoint_ids.insert(id, !current);
         }
         if let Some((text, label)) = to_copy {
@@ -1270,6 +1656,10 @@ impl InspectorApp {
 
     /// Tab 3: Next Actions (Remediation plan for incomplete items).
     pub fn render_next_actions_tab(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let catalog = self.localizer.clone();
+        let language = self.preferences.language.clone();
+        let tr = |key: &str| catalog.text(&language, key);
+        let tf = |key: &str, values: &[(&str, &str)]| catalog.format(&language, key, values);
         let Some(ref a) = self.analysis else { return };
 
         let mut incomplete: Vec<Checkpoint> = a
@@ -1282,24 +1672,33 @@ impl InspectorApp {
         if incomplete.is_empty() {
             ui.vertical_centered(|ui| {
                 ui.add_space(40.0);
-                ui.heading("🎉 All Checkpoints Passed!");
-                ui.label("No pending remediation actions remain for this activity.");
+                ui.heading(tr("ui.all_checkpoints_passed"));
+                ui.label(tr(
+                    "ui.no_pending_remediation_actions_remain_for_this_activity",
+                ));
             });
             return;
         }
 
         // Sort by weight descending so highest-value fixes appear first
-        incomplete.sort_by(|a, b| b.weight.partial_cmp(&a.weight).unwrap_or(std::cmp::Ordering::Equal));
+        incomplete.sort_by(|a, b| {
+            b.weight
+                .partial_cmp(&a.weight)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         let mut toggle_check: Option<(String, bool)> = None;
         let mut to_copy: Option<(String, &'static str)> = None;
 
         ui.horizontal(|ui| {
-            ui.heading(format!("Next Actions ({} remaining)", incomplete.len()));
+            ui.heading(tf(
+                "ui.next_actions_value_remaining",
+                &[("value", &format!("{}", incomplete.len()))],
+            ));
             ui.separator();
-            if ui.button("Copy All Remediation Commands").clicked() {
+            if ui.button(tr("action.copy_all")).clicked() {
                 let script = commands::device_script(&incomplete, None);
-                to_copy = Some((script, "remediation script"));
+                to_copy = Some((script, ""));
             }
         });
         ui.add_space(8.0);
@@ -1311,35 +1710,52 @@ impl InspectorApp {
                     .inner_margin(egui::Margin::same(12))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            let mut checked = checklist.checked_checkpoints.get(&c.id).copied().unwrap_or(false);
+                            let mut checked = checklist
+                                .checked_checkpoints
+                                .get(&c.id)
+                                .copied()
+                                .unwrap_or(false);
                             if ui.checkbox(&mut checked, "").changed() {
                                 toggle_check = Some((c.id.clone(), checked));
                             }
 
                             ui.strong(format!("#{}. {} - {}", idx + 1, c.device, c.property));
                             if !c.interface.is_empty() {
-                                ui.label(format!("(Interface: {})", c.interface));
+                                ui.label(tf(
+                                    "ui.interface_value",
+                                    &[("value", &format!("{}", c.interface))],
+                                ));
                             }
 
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.colored_label(
-                                    if c.status == Status::Failed {
-                                        egui::Color32::from_rgb(244, 67, 54)
-                                    } else {
-                                        egui::Color32::from_rgb(255, 179, 0)
-                                    },
-                                    format!("{:?}", c.status),
-                                );
-                                ui.strong(format!("{:.1} pts", c.weight));
-                            });
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.colored_label(
+                                        if c.status == Status::Failed {
+                                            egui::Color32::from_rgb(244, 67, 54)
+                                        } else {
+                                            egui::Color32::from_rgb(255, 179, 0)
+                                        },
+                                        tr(match c.status {
+                                            Status::Passed => "status.passed",
+                                            Status::Failed => "status.failed",
+                                            Status::Unverified => "status.unverified",
+                                        }),
+                                    );
+                                    ui.strong(tf(
+                                        "ui.value_pts",
+                                        &[("value", &format!("{:.1}", c.weight))],
+                                    ));
+                                },
+                            );
                         });
 
                         ui.add_space(4.0);
                         ui.horizontal(|ui| {
-                            ui.label("Expected: ");
+                            ui.label(tr("table.expected"));
                             ui.monospace(&c.expected);
                             if let Some(ref curr) = c.current {
-                                ui.label(" | Actual: ");
+                                ui.label(tr("table.current"));
                                 ui.monospace(curr);
                             }
                         });
@@ -1349,16 +1765,34 @@ impl InspectorApp {
                         if cmd.supported && !cmd.gui {
                             ui.horizontal(|ui| {
                                 ui.monospace(&cmd.text);
-                                if ui.small_button("📋 Copy Command").clicked() {
-                                    to_copy = Some((cmd.text.clone(), "CLI command"));
+                                if ui.small_button(tr("action.copy_checkpoint")).clicked() {
+                                    to_copy = Some((cmd.text.clone(), ""));
                                 }
                             });
                         } else if cmd.gui {
-                            ui.colored_label(egui::Color32::LIGHT_BLUE, format!("Manual GUI Action: {}", cmd.text));
+                            ui.colored_label(
+                                egui::Color32::LIGHT_BLUE,
+                                tf(
+                                    "ui.manual_gui_action_value",
+                                    &[("value", &format!("{}", cmd.text))],
+                                ),
+                            );
                         } else {
                             ui.colored_label(
                                 egui::Color32::LIGHT_RED,
-                                format!("No automatic CLI command available: {}", cmd.explanation),
+                                tf(
+                                    "ui.no_automatic_cli_command_available_value",
+                                    &[(
+                                        "value",
+                                        &format!(
+                                            "{}",
+                                            self.localizer.message(
+                                                &self.preferences.language,
+                                                &cmd.explanation
+                                            )
+                                        ),
+                                    )],
+                                ),
                             );
                         }
                     });
@@ -1376,10 +1810,17 @@ impl InspectorApp {
 
     /// Tab 4: Device Commands Script Generation.
     pub fn render_device_commands_tab(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let catalog = self.localizer.clone();
+        let language = self.preferences.language.clone();
+        let tr = |key: &str| catalog.text(&language, key);
+        let tf = |key: &str, values: &[(&str, &str)]| catalog.format(&language, key, values);
         let Some(ref a) = self.analysis else { return };
 
         let devices = self.unique_devices();
-        let current_filter = self.command_device_filter.clone().unwrap_or_else(|| "All Devices".into());
+        let current_filter = self
+            .command_device_filter
+            .clone()
+            .unwrap_or_else(|| tr("filter.all_devices").into());
         let target_device = self.command_device_filter.as_deref();
         let script = commands::device_script(&a.checkpoints, target_device);
 
@@ -1390,14 +1831,17 @@ impl InspectorApp {
         let active_filter = self.command_device_filter.clone();
 
         ui.horizontal(|ui| {
-            ui.heading("Device Configuration Scripts");
+            ui.heading(tr("ui.device_configuration_scripts"));
             ui.separator();
 
             // Device selector
             egui::ComboBox::from_id_salt("cmd_device_selector")
                 .selected_text(&current_filter)
                 .show_ui(ui, |ui| {
-                    if ui.selectable_label(active_filter.is_none(), "All Devices").clicked() {
+                    if ui
+                        .selectable_label(active_filter.is_none(), tr("filter.all_devices"))
+                        .clicked()
+                    {
                         select_dev = Some(None);
                     }
                     for dev in &devices {
@@ -1411,21 +1855,25 @@ impl InspectorApp {
             ui.separator();
 
             // Copy button
-            if ui.button("📋 Copy Script to Clipboard").clicked() {
-                do_copy = Some((script.clone(), "device script"));
+            if ui.button(tr("action.copy_device")).clicked() {
+                do_copy = Some((script.clone(), ""));
             }
 
             // Export to file button
-            if ui.button("💾 Save Script to File").clicked() {
+            if ui.button(tr("ui.save_script_to_file")).clicked() {
                 if let Some(path) = rfd::FileDialog::new()
-                    .add_filter("CLI Script (*.txt, *.ios)", &["txt", "ios", "cli"])
+                    .add_filter(tr("ui.cli_script_txt_ios"), &["txt", "ios", "cli"])
                     .set_file_name("device_script.txt")
                     .save_file()
                 {
-                    if let Err(e) = std::fs::write(&path, &script) {
-                        status_update = Some(format!("Error saving script: {e}"));
+                    if let Err(e) = self.export_data(&path, &script) {
+                        status_update =
+                            Some(tf("ui.error_saving_script_e", &[("e", &format!("{}", e))]));
                     } else {
-                        status_update = Some(format!("Script saved to {}", path.display()));
+                        status_update = Some(tf(
+                            "ui.script_saved_to_value",
+                            &[("value", &format!("{}", path.display()))],
+                        ));
                     }
                 }
             }
@@ -1455,6 +1903,10 @@ impl InspectorApp {
 
     /// Tab 5: Raw XML Viewer.
     pub fn render_raw_xml_tab(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let catalog = self.localizer.clone();
+        let language = self.preferences.language.clone();
+        let tr = |key: &str| catalog.text(&language, key);
+        let tf = |key: &str, values: &[(&str, &str)]| catalog.format(&language, key, values);
         let Some(ref a) = self.analysis else { return };
         let xml_len = a.xml.len();
         let xml_chars = a.xml.chars().count();
@@ -1467,27 +1919,36 @@ impl InspectorApp {
         let mut do_copy = false;
 
         ui.horizontal(|ui| {
-            ui.heading("Raw Packet Tracer XML");
+            ui.heading(tr("nav.raw_xml"));
             ui.separator();
 
             // Search query within XML
             ui.add(
                 egui::TextEdit::singleline(&mut self.xml_search_query)
-                    .hint_text("Find in XML..."),
+                    .hint_text(tr("ui.find_in_xml")),
             );
 
             if !self.xml_search_query.is_empty() {
-                ui.label(format!("{matches} matches"));
+                ui.label(tf(
+                    "ui.matches_matches",
+                    &[("matches", &format!("{}", matches))],
+                ));
                 if ui.small_button("✕").clicked() {
                     self.xml_search_query.clear();
                 }
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("📋 Copy XML").clicked() {
+                if ui.button(tr("ui.copy_xml")).clicked() {
                     do_copy = true;
                 }
-                ui.label(format!("Size: {:.2} KB ({} chars)", xml_len as f64 / 1024.0, xml_chars));
+                ui.label(tf(
+                    "ui.size_value_kb_value2_chars",
+                    &[
+                        ("value", &format!("{:.2}", xml_len as f64 / 1024.0)),
+                        ("value2", &format!("{}", xml_chars)),
+                    ],
+                ));
             });
         });
 
@@ -1503,20 +1964,32 @@ impl InspectorApp {
         });
 
         if do_copy {
-            self.copy_text_with_feedback(ctx, a.xml.clone(), "raw XML");
+            self.copy_text_with_feedback(ctx, a.xml.clone(), "");
         }
     }
 
     /// Tab 6: Diagnostics & Parser Logs.
     pub fn render_diagnostics_tab(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let catalog = self.localizer.clone();
+        let language = self.preferences.language.clone();
+        let tr = |key: &str| catalog.text(&language, key);
+        let tf = |key: &str, values: &[(&str, &str)]| catalog.format(&language, key, values);
         let Some(ref a) = self.analysis else { return };
-        let diagnostics = a.diagnostics.clone();
+        let diagnostics: Vec<String> = a
+            .diagnostics
+            .iter()
+            .chain(self.localizer.diagnostics.iter())
+            .map(|d| self.localizer.message(&self.preferences.language, d))
+            .collect();
         let mut do_copy = false;
 
         ui.horizontal(|ui| {
-            ui.heading(format!("Diagnostics ({} items)", diagnostics.len()));
+            ui.heading(tf(
+                "ui.diagnostics_value_items",
+                &[("value", &format!("{}", diagnostics.len()))],
+            ));
             ui.separator();
-            if ui.button("📋 Copy Diagnostics").clicked() {
+            if ui.button(tr("ui.copy_diagnostics")).clicked() {
                 do_copy = true;
             }
         });
@@ -1524,7 +1997,7 @@ impl InspectorApp {
         ui.add_space(8.0);
 
         if diagnostics.is_empty() {
-            ui.label("No warnings or diagnostic issues recorded.");
+            ui.label(tr("empty.no_diagnostics"));
         } else {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for (idx, diag) in diagnostics.iter().enumerate() {
@@ -1534,7 +2007,7 @@ impl InspectorApp {
                             ui.horizontal(|ui| {
                                 ui.colored_label(egui::Color32::from_rgb(255, 179, 0), "⚠");
                                 ui.strong(format!("#{}:", idx + 1));
-                                ui.label(diag);
+                                ui.label(self.localizer.message(&self.preferences.language, diag));
                             });
                         });
                     ui.add_space(4.0);
@@ -1544,9 +2017,72 @@ impl InspectorApp {
 
         if do_copy {
             let text = diagnostics.join("\n");
-            self.copy_text_with_feedback(ctx, text, "diagnostics log");
+            self.copy_text_with_feedback(ctx, text, "");
         }
     }
+}
+
+fn canonical_identity(path: &Path) -> PathBuf {
+    if let Ok(path) = path.canonicalize() {
+        return path;
+    }
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().unwrap_or_default().join(path)
+    };
+    if let (Some(parent), Some(name)) = (absolute.parent(), absolute.file_name()) {
+        if let Ok(parent) = parent.canonicalize() {
+            return parent.join(name);
+        }
+    }
+    // Normalize non-existing paths too, so repeated folder names cannot collide.
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            _ => normalized.push(component.as_os_str()),
+        }
+    }
+    normalized
+}
+
+fn atomic_export(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let (temp, mut file) = loop {
+        let temp = parent.join(format!(
+            ".pka-inspector-export-{}-{}.tmp",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+        {
+            Ok(file) => break (temp, file),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    };
+    let result = (|| {
+        file.write_all(data)?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&temp, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
 }
 
 impl eframe::App for InspectorApp {
@@ -1696,7 +2232,7 @@ mod tests {
         app.analysis = Some(make_test_analysis());
         app.activity_path = Some(PathBuf::from("C:/labs/lab1.pka"));
 
-        assert_eq!(app.activity_key(), "lab1.pka");
+        assert!(app.activity_key().ends_with("lab1.pka"));
         assert_eq!(app.manual_check_count(), (0, 3));
 
         // Mark chk1 as checked
@@ -1707,14 +2243,14 @@ mod tests {
 
         // Switch activity to lab2.pka
         app.activity_path = Some(PathBuf::from("C:/labs/lab2.pka"));
-        assert_eq!(app.activity_key(), "lab2.pka");
+        assert!(app.activity_key().ends_with("lab2.pka"));
         // In lab2, chk1 should NOT be checked (isolated checklists!)
         assert!(!app.is_manually_checked("chk1"));
         assert_eq!(app.manual_check_count(), (0, 3));
 
         // Switch back to lab1.pka
         app.activity_path = Some(PathBuf::from("C:/labs/lab1.pka"));
-        assert_eq!(app.activity_key(), "lab1.pka");
+        assert!(app.activity_key().ends_with("lab1.pka"));
         assert!(app.is_manually_checked("chk1"));
         assert_eq!(app.manual_check_count(), (1, 3));
     }
@@ -1769,10 +2305,16 @@ mod tests {
         if let Some(ref mut a) = app.analysis {
             a.checkpoints[0].status = Status::Failed;
         }
-        assert_eq!(app.analysis.as_ref().unwrap().checkpoints[0].status, Status::Failed);
+        assert_eq!(
+            app.analysis.as_ref().unwrap().checkpoints[0].status,
+            Status::Failed
+        );
 
         app.clear_progress();
-        assert_eq!(app.analysis.as_ref().unwrap().checkpoints[0].status, Status::Passed);
+        assert_eq!(
+            app.analysis.as_ref().unwrap().checkpoints[0].status,
+            Status::Passed
+        );
         assert!(app.progress_analysis.is_none());
         assert!(app.progress_path.is_none());
     }
@@ -1785,6 +2327,7 @@ mod tests {
 
         app.tx
             .send(LoadMessage::ActivityLoaded {
+                token: 0,
                 path: path.clone(),
                 result: Ok(analysis),
             })
@@ -1794,7 +2337,7 @@ mod tests {
         assert!(app.analysis.is_some());
         assert_eq!(app.activity_path, Some(path));
         assert_eq!(app.analysis.as_ref().unwrap().checkpoints.len(), 3);
-        assert!(app.status_message.as_ref().unwrap().contains("Successfully loaded"));
+        assert!(app.status_message.is_some());
     }
 
     #[test]
@@ -1842,5 +2385,248 @@ mod tests {
         assert!(cmd1.supported);
         assert!(!cmd1.gui);
         assert!(cmd1.text.contains("switchport mode trunk"));
+    }
+    #[test]
+    fn language_defaults_and_persists_for_existing_and_custom_packs() {
+        let old: Preferences = serde_json::from_str(r#"{"compact_view":true}"#).unwrap();
+        assert_eq!(old.language, "vi");
+        assert!(old.compact_view);
+        for language in ["vi", "en", "fr-CA"] {
+            let preferences = Preferences {
+                language: language.into(),
+                ..Preferences::default()
+            };
+            let saved = serde_json::to_string(&preferences).unwrap();
+            assert_eq!(
+                serde_json::from_str::<Preferences>(&saved)
+                    .unwrap()
+                    .language,
+                language
+            );
+        }
+    }
+
+    #[test]
+    fn language_selector_discovers_external_pack_without_registration() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(
+            directory.path().join("fr.json"),
+            r#"{"locale":"fr","name":"Fran?ais","messages":{"nav.overview":"Vue g?n?rale"}}"#,
+        )
+        .unwrap();
+        let mut app = InspectorApp::new(None, None);
+        app.localizer = Arc::new(Localizer::from_directory(Some(directory.path())));
+        assert!(
+            app.localizer
+                .languages()
+                .iter()
+                .any(|(code, _)| code == "fr")
+        );
+        app.preferences.language = "fr".into();
+        assert_eq!(
+            app.localizer
+                .text(&app.preferences.language, Tab::Overview.title()),
+            "Vue g?n?rale"
+        );
+    }
+
+    #[test]
+    fn all_static_ui_catalog_keys_exist_in_both_base_languages() {
+        let english: pka_lab_inspector::localization::LanguagePack =
+            serde_json::from_str(include_str!("../locales/en.json")).unwrap();
+        let vietnamese: pka_lab_inspector::localization::LanguagePack =
+            serde_json::from_str(include_str!("../locales/vi.json")).unwrap();
+        let source = include_str!("ui.rs").split("#[cfg(test)]").next().unwrap();
+        for key in source.split('"').filter(|s| {
+            s.starts_with("ui.")
+                || s.starts_with("nav.")
+                || s.starts_with("filter.")
+                || s.starts_with("menu.")
+                || s.starts_with("status.")
+                || s.starts_with("table.")
+                || s.starts_with("detail.")
+                || s.starts_with("score.")
+                || s.starts_with("action.")
+                || s.starts_with("empty.")
+                || s.starts_with("info.")
+                || s.starts_with("error.")
+        }) {
+            if key.ends_with('.') {
+                continue;
+            }
+            assert!(
+                english.messages.contains_key(key),
+                "missing English key: {key}"
+            );
+            assert!(
+                vietnamese
+                    .messages
+                    .get(key)
+                    .is_some_and(|value| !value.is_empty()),
+                "missing Vietnamese key: {key}"
+            );
+        }
+    }
+
+    #[test]
+    fn same_basename_in_separate_folders_has_separate_checklist() {
+        let directory = tempfile::tempdir().unwrap();
+        let first = directory.path().join("first");
+        let second = directory.path().join("second");
+        std::fs::create_dir(&first).unwrap();
+        std::fs::create_dir(&second).unwrap();
+        std::fs::write(first.join("lab.pka"), b"one").unwrap();
+        std::fs::write(second.join("lab.pka"), b"two").unwrap();
+        let mut app = InspectorApp::new(None, None);
+        app.activity_path = Some(first.join("lab.pka"));
+        app.set_manual_check("chk1", true);
+        let first_key = app.activity_key();
+        app.activity_path = Some(second.join("lab.pka"));
+        assert_ne!(app.activity_key(), first_key);
+        assert!(!app.is_manually_checked("chk1"));
+        app.activity_path = Some(first.join(".").join("lab.pka"));
+        assert_eq!(app.activity_key(), first_key);
+        assert!(app.is_manually_checked("chk1"));
+    }
+
+    #[test]
+    fn exports_refuse_canonical_sources_and_packet_tracer_extensions() {
+        let directory = tempfile::tempdir().unwrap();
+        let activity = directory.path().join("activity.xml");
+        let progress = directory.path().join("progress.xml");
+        std::fs::write(&activity, b"activity source").unwrap();
+        std::fs::write(&progress, b"progress source").unwrap();
+        let mut app = InspectorApp::new(None, None);
+        app.activity_path = Some(activity.clone());
+        app.progress_path = Some(progress.clone());
+        for target in [
+            directory.path().join(".").join("activity.xml"),
+            progress.clone(),
+            directory.path().join("new.PKA"),
+            directory.path().join("new.PkT"),
+        ] {
+            assert_eq!(
+                app.export_data(&target, b"report").unwrap_err().kind(),
+                std::io::ErrorKind::PermissionDenied
+            );
+        }
+        assert_eq!(std::fs::read(&activity).unwrap(), b"activity source");
+        assert_eq!(std::fs::read(&progress).unwrap(), b"progress source");
+        assert!(!directory.path().join("new.PKA").exists());
+    }
+
+    #[test]
+    fn exporting_over_a_hardlink_replaces_only_the_export_entry() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("activity.pka");
+        let destination = directory.path().join("report.txt");
+        std::fs::write(&source, b"original packet tracer bytes").unwrap();
+        std::fs::hard_link(&source, &destination).unwrap();
+        let mut app = InspectorApp::new(None, None);
+        app.activity_path = Some(source.clone());
+        app.export_data(&destination, b"new report").unwrap();
+        assert_eq!(
+            std::fs::read(&source).unwrap(),
+            b"original packet tracer bytes"
+        );
+        assert_eq!(std::fs::read(&destination).unwrap(), b"new report");
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn failed_atomic_export_removes_its_temporary_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("existing-directory");
+        std::fs::create_dir(&destination).unwrap();
+        assert!(atomic_export(&destination, b"report").is_err());
+        assert!(destination.is_dir());
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn stale_activity_result_does_not_replace_newer_state_or_finish_its_spinner() {
+        let mut app = InspectorApp::new(None, None);
+        app.request_token = 2;
+        app.is_loading = true;
+        app.tx
+            .send(LoadMessage::ActivityLoaded {
+                token: 1,
+                path: "old.pka".into(),
+                result: Ok(make_test_analysis()),
+            })
+            .unwrap();
+        app.drain_messages();
+        assert!(app.analysis.is_none());
+        assert!(app.is_loading);
+        app.tx
+            .send(LoadMessage::ActivityLoaded {
+                token: 2,
+                path: "new.pka".into(),
+                result: Ok(make_test_analysis()),
+            })
+            .unwrap();
+        app.drain_messages();
+        assert_eq!(app.activity_path, Some("new.pka".into()));
+        assert!(!app.is_loading);
+    }
+
+    #[test]
+    fn clearing_progress_invalidates_in_flight_comparison() {
+        let mut app = InspectorApp::new(None, None);
+        app.original_analysis = Some(make_test_analysis());
+        app.request_token = 1;
+        app.is_loading = true;
+        app.clear_progress();
+        let mut compared = make_test_analysis();
+        compared.checkpoints[0].status = Status::Failed;
+        app.tx
+            .send(LoadMessage::ProgressLoaded {
+                token: 1,
+                path: "stale.pkt".into(),
+                result: Ok((make_test_analysis(), Some(compared))),
+            })
+            .unwrap();
+        app.drain_messages();
+        assert!(app.progress_path.is_none());
+        assert_eq!(
+            app.analysis.as_ref().unwrap().checkpoints[0].status,
+            Status::Passed
+        );
+    }
+
+    #[test]
+    fn concurrent_load_requests_are_suppressed() {
+        let mut app = InspectorApp::new(None, None);
+        app.original_analysis = Some(make_test_analysis());
+        app.is_loading = true;
+        app.request_token = 9;
+        app.load_activity_background("unopened.pka".into(), None);
+        app.load_progress_background("unopened.pkt".into(), None);
+        assert_eq!(app.request_token, 9);
+        assert!(app.rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn completed_progress_uses_the_background_comparison_result() {
+        let mut app = InspectorApp::new(None, None);
+        app.original_analysis = Some(make_test_analysis());
+        let mut compared = make_test_analysis();
+        compared.checkpoints[0].status = Status::Failed;
+        // The deliberately non-parseable XML must never be reparsed by drain_messages.
+        let mut progress = make_test_analysis();
+        progress.xml = "not XML".into();
+        app.tx
+            .send(LoadMessage::ProgressLoaded {
+                token: 0,
+                path: "progress.pkt".into(),
+                result: Ok((progress, Some(compared))),
+            })
+            .unwrap();
+        app.drain_messages();
+        assert_eq!(
+            app.analysis.as_ref().unwrap().checkpoints[0].status,
+            Status::Failed
+        );
+        assert!(app.progress_analysis.is_some());
     }
 }
