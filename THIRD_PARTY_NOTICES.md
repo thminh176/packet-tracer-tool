@@ -1,8 +1,8 @@
 ﻿# Third-party dependency notices
 
-Resolved crates from Cargo.lock. The local release bundles available license and notice texts in third-party-licenses. Platform-specific crates are listed even when not linked on Windows.
+Application-owned source is MIT. Bundled dependencies retain their own licenses and notices. This inventory reflects the locked graph; Windows package notices include exact supplemental upstream texts from third-party/license-sources.json. Non-Windows-only crates are listed for transparency, not as a claim of a verified non-Windows release.
 
-pktfile 0.2.2 is MIT-licensed and vendored with a documented decompression resource-limit patch; see vendor/pktfile/PATCH.md and LICENSE. No cryptography changes were made. Windows Segoe UI is read from the operating system for Vietnamese glyphs and is not redistributed.
+pktfile 0.2.2 (MIT) is vendored with bounded decompression and quick-xml 0.41 compatibility changes. See vendor/pktfile/PATCH.md and LICENSE. Embedded fonts have OFL/UFL/MIT/Bitstream notices; Windows Segoe UI is read from the installed OS and is not redistributed.
 
 | Crate | Version | License | Source |
 |---|---|---|---|
@@ -241,7 +241,6 @@ pktfile 0.2.2 is MIT-licensed and vendored with a documented decompression resou
 | profiling | 1.0.18 | MIT OR Apache-2.0 | https://github.com/aclysma/profiling |
 | pxfm | 0.1.30 | BSD-3-Clause OR Apache-2.0 | https://github.com/awxkee/pxfm |
 | quick-error | 2.0.1 | MIT/Apache-2.0 | http://github.com/tailhook/quick-error |
-| quick-xml | 0.38.4 | MIT | https://github.com/tafia/quick-xml |
 | quick-xml | 0.41.0 | MIT | https://github.com/tafia/quick-xml |
 | quote | 1.0.47 | MIT OR Apache-2.0 | https://github.com/dtolnay/quote |
 | rand | 0.9.5 | MIT OR Apache-2.0 | https://github.com/rust-random/rand |
