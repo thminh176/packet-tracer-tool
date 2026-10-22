@@ -32,26 +32,26 @@ Source: runtime registry. Packet Tracer execution-tested families: **0**.
 | switch.default_gateway | 4 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst3560/software/release/15-0_1_se/configuration/guide/scg3560/swipaddr.html) |
 | switch.routed_port | 8 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst3560/software/release/15-0_1_se/configuration/guide/scg3560/swint.html) |
 | switch.ip_routing | 1 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst3560/software/release/15-0_1_se/configuration/guide/scg3560/swiprout.html) |
-| router.interface.ipv4 | 3 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/ios/ipv6/command/reference/ipv6_book/ipv6_04.html) |
+| router.interface.ipv4 | 3 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/routers/ios/config/17-x/ip-addressing/b-ip-addressing/m_config-ipv4-addr-0.html) |
 | router.interface.ipv6 | 2 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipv6/command/ipv6-cr-book/ipv6-i1.html) |
 | router.interface.link_local | 2 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipv6/command/ipv6-cr-book/ipv6-i1.html) |
 | router.interface.description | 2 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/lanswitch/configuration/15-mt/lsw-15-mt-book/lsw-hwic-ethsw-ic.html) |
 | router.interface.shutdown | 2 | true | true | [reference](https://www.cisco.com/E-Learning/bulk/public/tac/cim/cib/using_cisco_ios_software/cmdrefs/shutdown.htm) |
-| router.interface.dot1q | 3 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/ios/lanswitch/command/reference/lsw_book/lsw_b1.html) |
+| router.interface.dot1q | 3 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/routers/ios/config/17-x/lan-wan/b-lan-wan/m_lsw-conf-rout-vlan.html) |
 | router.ipv6.routing | 1 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipv6/command/ipv6-cr-book/ipv6-i5.html) |
-| router.route.ipv4 | 1 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/ios/iproute_pi/command/reference/iri_book/iri_pi1.html) |
-| router.route.ipv6 | 1 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipv6/command/ipv6-cr-book/ipv6-i4.html) |
-| router.ospf.network | 3 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/iproute_ospf/configuration/15-mt/iro-15-mt-book/iro-cfg.html) |
-| router.eigrp.network | 2 | true | false | [reference](https://www.cisco.com/en/US/docs/ios-xml/ios/iproute_eigrp/configuration/15-0s/Configuring_EIGRP.html) |
-| router.rip.network | 2 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/iproute_rip/configuration/15-mt/irr-15-mt-book/irr-cfg-info-prot.html) |
+| router.route.ipv4 | 1 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/iproute_pi/command/iri-cr-book/iri-cr-a1.html) |
+| router.route.ipv6 | 1 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/routers/ios/config/17-x/ip-routing/b-ip-routing/m_ip6-route-static-xe.html) |
+| router.ospf.network | 3 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/routers/ios/config/17-x/ip-routing/b-ip-routing/m_iro-cfg-0.html) |
+| router.eigrp.network | 2 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/routers/ios/config/17-x/ip-routing/b-ip-routing/m_ire-enhanced-igrp.html) |
+| router.rip.network | 2 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/routers/ios/config/17-x/ip-routing/b-ip-routing/m_irr-cfg-info-prot-0.html) |
 | router.acl.standard | 3 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/sec_data_acl/configuration/15-sy/sec-data-acl-15-sy-book/sec-create-ip-apply.html) |
 | router.acl.apply | 3 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/sec_data_acl/configuration/15-sy/sec-data-acl-15-sy-book/sec-create-ip-apply.html) |
-| router.nat.static | 2 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipaddr_nat/configuration/xe-2/nat-xe-2-book/iadnat-addr-consv.html) |
-| router.nat.interface | 2 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipaddr_nat/configuration/xe-2/nat-xe-2-book/iadnat-addr-consv.html) |
-| router.dhcp.pool | 4 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipaddr_dhcp/configuration/15-mt/dhcp-15-mt-book/config-dhcp-server.html) |
-| router.dhcp.exclude | 2 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipaddr_dhcp/configuration/15-mt/dhcp-15-mt-book/config-dhcp-server.html) |
+| router.nat.static | 2 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/routers/ios/config/17-x/ip-addressing/b-ip-addressing/m_iadnat-addr-consv-xe.html) |
+| router.nat.interface | 2 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/routers/ios/config/17-x/ip-addressing/b-ip-addressing/m_iadnat-addr-consv-xe.html) |
+| router.dhcp.pool | 4 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/routers/ios/config/17-x/ip-addressing/b-ip-addressing/m_config-dhcp-server-xe.html) |
+| router.dhcp.exclude | 2 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/routers/ios/config/17-x/ip-addressing/b-ip-addressing/m_config-dhcp-server-xe.html) |
 
-Documented/recognized registry entries: 46; executable required-field examples: 46. Examples are synthetic, not grading or simulation certification.
+Documented/recognized registry entries: 46; executable synthetic examples with explicit context: 46. Examples are synthetic, not grading or simulation certification.
 
-Warm synthetic config parsing: 2.026 ms / 1000 parses. Single-machine measurement, not a cross-machine guarantee.
-Warm synthetic plan generation (basic.hostname): 0.692 ms / 1000 plans.
+Warm synthetic config parsing: 1.391 ms / 1000 parses. Single-machine measurement, not a cross-machine guarantee.
+Warm synthetic plan generation (basic.hostname): 0.774 ms / 1000 plans.

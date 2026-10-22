@@ -1,5 +1,9 @@
 # License and release audit
 
+## v0.2.0 update, 2026-10-23
+
+The extension retains the baseline dependency graph and MIT application license. No restrictive decoder implementation, Cisco binary, courseware or copied manual chapter was added. Cisco links and concise independently written descriptions are retained per command family. The application screenshot uses synthetic data. `cargo audit` reports zero vulnerabilities with informational unmaintained-dependency notices; `cargo deny --locked check licenses sources` passes. The ZIP must still pass the existing full-notice/hash and private-content checks before publication. These are technical distribution checks, not a new legal opinion.
+
 Verified 2026-10-22. Dependency/source candidate `2865b5e` (implementation hardening `0e9ea53`), with packaging follow-up `9bb1cd4` inspected read-only in the coordinator checkout; dependency inventory: 397 Cargo.lock package entries including this application, 396 third-party entries. All corresponding third-party manifests were available locally. This review covers declared licenses, retained upstream notices, public terms and the inspected packaging design; it is not legal advice or an assurance of all jurisdictions' rights. [Provenance](PROJECT_PROVENANCE.md) and [ecosystem sources](ECOSYSTEM_COMPARISON.md) supply the source chain.
 
 ## Actionable verdict

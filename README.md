@@ -6,7 +6,14 @@
 
 Independent project, **not affiliated with or endorsed by Cisco**. Cisco and Packet Tracer are trademarks of their respective owner. This repository contains no Cisco binaries, logos, courseware, private activities or answer keys.
 
-## What v0.1.1 does
+![Windows Command Library with synthetic data](docs/images/cisco-library-windows.png)
+
+## What v0.2.0 does
+
+- Explore 46 typed Cisco command families in the bilingual Command Library (Ctrl+7), with device profiles, prerequisites, explicit parameters, configuration modes and Cisco documentation links.
+- Suggest conditional VLAN assignments from explicit requirements without inventing current port mode or changing verification status.
+- Require explicit OSPF process/area and uniquely identified saved device configuration before verifying routes. Separate command availability from automatic verification coverage.
+- Parse saved IOS configuration by mode and validate bounded subsets of explicit interface and switching fields. See [command coverage](docs/CISCO_COMMAND_COVERAGE.md).
 
 - Open supported modern PKA/PKT containers read-only; inspect decoded XML.
 - Recursively display selected candidate checkpoints by device/interface with requirements, weight and evidence.
@@ -22,7 +29,7 @@ Independent project, **not affiliated with or endorsed by Cisco**. Cisco and Pac
 
 ## Install and use
 
-Download `packet-tracer-tool-v0.1.1-windows-x64.zip` and its `.sha256` from [Releases](https://github.com/thminh176/packet-tracer-tool/releases), verify the checksum, extract and run `pka-lab-inspector.exe`. The EXE is unsigned. See [installation](docs/INSTALLATION.md).
+Download `packet-tracer-tool-v0.2.0-windows-x64.zip` and its `.sha256` from [Releases](https://github.com/thminh176/packet-tracer-tool/releases), verify the checksum, extract and run `pka-lab-inspector.exe`. The EXE is unsigned. See [installation](docs/INSTALLATION.md).
 
 Open an activity, review diagnostics, then optionally load a separate saved network to compare progress. Select a checkpoint for evidence and command support. **Paste IOS commands into Packet Tracer → target device → CLI, never PowerShell or a host shell.** Use GUI instructions for PC/server settings. Unsupported requirements are omitted from executable commands; review them separately.
 
@@ -32,7 +39,7 @@ The application never modifies the source PKA/PKT and does not execute generated
 
 This is a conservative inspector, **not Cisco's native grader**. Selection metadata is inferred from observed schema. Unlabelled embedded network snapshots remain Unverified; current/expected data is used only when reliable. Unsupported checks never count as failures or fabricated passes. Static routes and OSPF network statements are evaluated against running-config; however, dynamic routing convergence, metric calculation, VLAN/trunking logic, ACL, NAT, DHCP, custom/script graders, activity password handling, grade editing, live integration and universal PKA compatibility remain outside offline inspection scope.
 
-The known 32-checkpoint / 100-point / 7-device reference and a real 126-checkpoint activity have not been certified. The original synthetic 126-checkpoint fixture tests structure and supported comparisons only. See [test evidence](docs/TEST_RESULTS.md) and [compatibility](docs/COMPATIBILITY.md).
+A permitted private-copy collection decoded 25 PKA and seven PKT files; one matches the structural 32-checkpoint / 100-point / 7-device reference. This verifies decoding/extraction, not command execution or Cisco grading. No real 126-checkpoint activity is certified. The original synthetic 126-checkpoint fixture tests structure and supported comparisons only. See [real-file evidence](docs/REAL_FILE_REVIEW.md), [test results](docs/TEST_RESULTS.md) and [compatibility](docs/COMPATIBILITY.md).
 
 ## Languages
 

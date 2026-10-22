@@ -11,6 +11,7 @@ Independent offline Windows x64 Rust / egui companion for Packet Tracer labs. No
 - Route absence requires a unique current snapshot and uniquely owned device configuration. ECMP/floating route statements remain distinct. Contradictory device identities and incompatible gateway workflows suppress suggestions.
 - Mode-aware saved-configuration parsing, explicit scalar switch validators and separate checkpoint command classification / command coverage / automatic verification metrics.
 - Existing read-only PKA/PKT/XML inspection, evidence, manual checklist separation, bilingual preferences and protected reports remain available.
+- Conditional Access/Native/Allowed VLAN assignments and VLAN naming use explicit requirement context; dot1Q uses the explicit VLAN ID, never the subinterface suffix. Current-state verification and strict library prerequisites remain separate.
 
 ## Evidence and limitations
 

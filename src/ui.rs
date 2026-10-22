@@ -3171,6 +3171,7 @@ impl InspectorApp {
 
                                 // Syntax Box
                                 ui.strong(tr("cisco.syntax"));
+                                ui.label(tr("detail.reference_syntax"));
                                 egui::Frame::NONE
                                     .fill(egui::Color32::from_rgb(20, 24, 30))
                                     .corner_radius(egui::CornerRadius::same(4))

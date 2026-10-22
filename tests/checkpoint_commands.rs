@@ -188,6 +188,7 @@ fn command_readiness_does_not_change_unverified_status_or_fabricate_evidence() {
     assert_eq!(cisco::mapping::classify(&c), Classification::Ready);
     let coverage = cisco::mapping::coverage(std::slice::from_ref(&c));
     assert_eq!(coverage.command_ready, 1);
+    assert_eq!(coverage.missing_parameters, 0);
     assert_eq!(coverage.validation_verified, 0);
     assert_eq!(serde_json::to_value(&c).unwrap(), before);
     assert_eq!(c.status, Status::Unverified);

@@ -1,6 +1,10 @@
 //! Conservative, offline CLI suggestions. Complex values use the explicit grammars
 //! documented in `generate`; unknown assessment encodings are never CLI values.
 use crate::model::{Checkpoint, Command};
+mod assignment;
+pub(crate) fn checkpoint_vlan(c: &Checkpoint) -> Option<u16> {
+    assignment::vlan_context(c)
+}
 use std::{
     collections::{BTreeMap, HashSet},
     net::{Ipv4Addr, Ipv6Addr},
@@ -389,7 +393,12 @@ fn plan(c: &Checkpoint) -> Result<Plan, &'static str> {
     if crate::cisco::mapping::identity_conflict(c) {
         return Err("Conflicting device model/type evidence; no commands generated");
     }
-    if !safe(&c.expected)
+    let safe_vlan_list = property_key(c) == "allowedvlans"
+        && c.expected.len() <= 1024
+        && !c.expected.chars().any(char::is_control)
+        && crate::cisco::vlan_list(&c.expected.split_whitespace().collect::<Vec<_>>().join(","))
+            .is_some();
+    if (!safe(&c.expected) && !safe_vlan_list)
         || !safe(&c.interface)
         || !safe(&c.device)
         || !safe(&c.property)
@@ -463,6 +472,9 @@ fn plan(c: &Checkpoint) -> Result<Plan, &'static str> {
         .any(|v| ["-1", "65535", "4294967295", "18446744073709551615"].contains(v))
     {
         return Err("Sentinel numeric value in explicit configuration; no commands generated.");
+    }
+    if let Some(assignment) = assignment::plan(c) {
+        return assignment;
     }
     if !is_gui(c) {
         let explicit = explicit_value(c)?;
@@ -749,6 +761,7 @@ pub fn generate(checkpoint: &Checkpoint) -> Command {
         return unsupported("Conflicting explicit named parameter evidence; inspect requirements");
     }
     if !is_gui(checkpoint)
+        && assignment::plan(checkpoint).is_none()
         && let Some(req) = crate::cisco::mapping::request(checkpoint, &resolved)
         && crate::cisco::catalog().iter().any(|s| s.id == req.family)
     {
@@ -811,7 +824,16 @@ pub fn generate(checkpoint: &Checkpoint) -> Command {
         };
     }
     match plan(checkpoint) {
-        Ok(p) => Command { supported:true, gui:false, text:render(&[p]), explanation:"Review explicit values and device compatibility. Packet Tracer execution support is untested for this suggestion. No commands have been executed.".into() },
+        Ok(p) => Command {
+            supported: true,
+            gui: false,
+            text: render(&[p]),
+            explanation: if assignment::plan(checkpoint).is_some() {
+                "Requirement-based command suggestion; verify VLAN state and port mode where applicable. Current configuration has not been verified.".into()
+            } else {
+                "Review explicit values and device compatibility. Packet Tracer execution support is untested for this suggestion. No commands have been executed.".into()
+            },
+        },
         Err(e) => unsupported(e),
     }
 }
@@ -1082,7 +1104,7 @@ pub fn device_script(checkpoints: &[Checkpoint], device: Option<&str>) -> String
         let mut unique_plans = HashSet::new();
         let mut omitted = 0;
         let mut conflicts = 0;
-        for c in items {
+        for c in &items {
             if conflict_plan(c)
                 .and_then(|p| conflict_key(c, &p))
                 .is_some_and(|k| values.get(&k).is_some_and(|v| v.len() > 1))
@@ -1125,6 +1147,12 @@ pub fn device_script(checkpoints: &[Checkpoint], device: Option<&str>) -> String
             ));
         }
         if !plans.is_empty() {
+            if items
+                .iter()
+                .any(|c| assignment::plan(c).is_some_and(|p| p.is_ok()))
+            {
+                output.push_str("! Requirement-based assignments: verify port mode, VLAN state, VTP policy and peer VLANs before applying.\n");
+            }
             output.push_str(&render(&plans));
         }
         output.push('\n');

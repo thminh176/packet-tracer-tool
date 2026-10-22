@@ -48,4 +48,4 @@ jobs:
           cd release-assets
           sha256sum --check *.sha256
           cd ..
-          gh release create "$RELEASE_TAG" release-assets/* --verify-tag --draft --title "Packet Tracer Tool $RELEASE_TAG — Initial Release" --notes-file docs/RELEASE_NOTES.md
+          gh release create "$RELEASE_TAG" release-assets/* --verify-tag --draft --title "Packet Tracer Tool $RELEASE_TAG" --notes-file docs/RELEASE_NOTES.md

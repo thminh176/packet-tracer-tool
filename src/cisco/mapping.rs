@@ -105,6 +105,19 @@ pub fn request(c: &Checkpoint, resolved: &str) -> Option<CommandRequest> {
             put("address", resolved);
             "router.interface.link_local"
         }
+        "vlanid"
+            if c.path
+                .split(" / ")
+                .any(|part| part.eq_ignore_ascii_case("802.1Q")) =>
+        {
+            put("interface", &c.interface);
+            put("vlan", resolved);
+            "router.interface.dot1q"
+        }
+        "encapsulation" if resolved == "EthernetEncapProcess" => {
+            put("interface", &c.interface);
+            "router.interface.dot1q"
+        }
         "interfacedescription" | "description" if !c.interface.is_empty() => {
             put("interface", &c.interface);
             put("description", resolved);
@@ -142,6 +155,13 @@ pub fn request(c: &Checkpoint, resolved: &str) -> Option<CommandRequest> {
             if t.len() == 2 {
                 put("name", t[1]);
             }
+            "switch.vlan"
+        }
+        "vlanname" => {
+            if let Some(vlan) = crate::commands::checkpoint_vlan(c) {
+                put("vlan", &vlan.to_string());
+            }
+            put("name", resolved);
             "switch.vlan"
         }
         "stpmode" | "spanningtreemode" => {
@@ -271,7 +291,7 @@ pub fn coverage(checkpoints: &[Checkpoint]) -> CheckpointCoverage {
         if let Some(req) = request(c, &resolved) {
             n.recognized += 1;
             let p = super::generate(&req);
-            if p.classification == super::Classification::MissingParameters {
+            if !command.supported && p.classification == super::Classification::MissingParameters {
                 n.missing_parameters += 1;
             }
         } else {

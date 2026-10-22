@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.0 — Cisco Command Coverage
+
+- Add a modular typed registry of 46 bounded command families, explicit device profiles, configuration contexts, prerequisite validation, Cisco source links and read-only verification suggestions.
+- Add the bilingual Cisco Command Library (Ctrl+7), searchable by topic/device/profile, parameter forms and gated command copying.
+- Remove implicit OSPF process/area and generic classful inference; validate complete hyphen structures, routing targets and unique saved-device ownership.
+- Parse IOS modes and preserve ACL order; add bounded switching validators and separate command readiness from verification/score.
+- Resolve explicit IPv6 siblings and dot1Q/VLAN branches without mining interface suffixes or ambiguous answer snapshots. Conditional scalar VLAN suggestions preserve missing current-state evidence.
+- Keep all Packet Tracer execution support untested unless independently demonstrated. See coverage, compatibility and test evidence; unsupported families remain explicit.
+
 ## 0.1.1 — Network & Routing Fixes
 
 - **IPv4 static route hyphenated encoding fix**: Parse and normalize Packet Tracer's internal hyphenated static route representation (`destination-prefix-nexthop_or_interface-unknown-distance`, such as `172.16.128.0-17-172.18.192.1-0-1` and `0.0.0.0-0-Serial0/1/0-0-1`). Correctly generates Cisco IOS `ip route` configuration with subnet masks, next-hop IP or exit interfaces, and administrative distance.

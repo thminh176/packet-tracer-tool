@@ -18,7 +18,7 @@ fn eq(req: &CommandRequest, key: &str, value: &str) -> Result<(), String> {
         Err(format!("{key} must be {value}; context cannot be inferred"))
     }
 }
-fn physical(s: &str) -> bool {
+pub(crate) fn physical(s: &str) -> bool {
     let lower = s.to_ascii_lowercase();
     let Some(tail) = [
         "fastethernet",

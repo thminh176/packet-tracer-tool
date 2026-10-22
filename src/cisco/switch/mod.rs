@@ -2,6 +2,7 @@
 mod handlers;
 use super::{Capability, CommandSpec, ParameterKind as K, ParameterSpec};
 pub use handlers::generate;
+pub(crate) use handlers::physical as physical_port;
 
 const VLAN: &str = "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst3560/software/release/15-0_1_se/configuration/guide/scg3560/swvlan.html";
 const TRUNK: &str = "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst2960/software/release/15-2_2_e/configuration/guide/b_1522e_2960_2960c_2960s_2960sf_2960p_cg/b_1522e_2960_2960c_2960s_2960sf_2960p_cg_chapter_01101.html";

@@ -1,5 +1,9 @@
 # Project provenance
 
+## v0.2.0 extension, 2026-10-23
+
+The extension adds Rust typed command specifications, independently authored handlers, synthetic tests and concise documentation backed by linked Cisco references. No third-party implementation or dependency was added for the command engine. Documentation is linked rather than mirrored. The new screenshot contains only the original synthetic fixture and library reference/example data. Private-copy analysis output and activity containers remain excluded. Earlier findings below remain bounded audit observations, not a legal certification.
+
 Audit date: 2026-10-22. Dependency/source candidate: `2865b5e`, including implementation hardening `0e9ea53`; packaging follow-up `9bb1cd4` was inspected read-only in the coordinator checkout and does not change this dependency graph. This is an evidence record, not a certification of sole authorship or legal clearance. See [release gates](LICENSE_AUDIT.md).
 
 ## Scope and history inspected
