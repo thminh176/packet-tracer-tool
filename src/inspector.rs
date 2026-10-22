@@ -455,6 +455,18 @@ pub fn parse(xml: &str) -> Result<Analysis> {
             if types.len() == 1 {
                 checkpoint.device_type = types[0].into();
             }
+            let models: std::collections::BTreeSet<_> = matching
+                .iter()
+                .filter_map(|d| d.unique_child("ENGINE").unwrap_or(d).unique_value("MODEL"))
+                .filter(|s| !s.is_empty())
+                .collect();
+            if models.len() == 1
+                && let Some(model) = models.first()
+            {
+                checkpoint
+                    .evidence
+                    .push(format!("assessment:device-model={model}"));
+            }
             let mut ports = Vec::new();
             for d in matching {
                 descendants(d, "PORT", &mut ports);
@@ -731,6 +743,8 @@ fn semantic_equal(tag: &str, expected: &str, actual: &str) -> Option<bool> {
     }
 }
 fn attach_command_context(checks: &mut [Checkpoint]) {
+    let mut ospf_processes = HashMap::<(String, String, String), Vec<String>>::new();
+    let mut ospf_areas = HashMap::<(String, String, String), Vec<String>>::new();
     let mut masks = HashMap::<(String, String, String), Vec<String>>::new();
     let mut addresses = HashMap::<(String, String, String), Vec<String>>::new();
     let mut prefixes = HashMap::<(String, String, String), Vec<u8>>::new();
@@ -746,10 +760,45 @@ fn attach_command_context(checks: &mut [Checkpoint]) {
         )
     };
     for c in checks.iter() {
+        if c.path.to_ascii_lowercase().contains("ospf")
+            && !c.device.is_empty()
+            && !c.evidence.iter().any(|e| {
+                matches!(
+                    e.as_str(),
+                    "assessment:unsupported" | "assessment:ambiguous" | "assessment:inventory"
+                )
+            })
+        {
+            let key: String = c
+                .property
+                .chars()
+                .filter(|ch| ch.is_ascii_alphanumeric())
+                .flat_map(char::to_lowercase)
+                .collect();
+            if matches!(key.as_str(), "processid" | "ospfprocessid")
+                && c.expected.parse::<u16>().is_ok_and(|n| n > 0)
+            {
+                ospf_processes
+                    .entry(context(c))
+                    .or_default()
+                    .push(c.expected.clone());
+            }
+            if matches!(key.as_str(), "areaid" | "ospfareaid")
+                && (c.expected.parse::<u32>().is_ok()
+                    || c.expected.parse::<std::net::Ipv4Addr>().is_ok())
+            {
+                ospf_areas
+                    .entry(context(c))
+                    .or_default()
+                    .push(c.expected.clone());
+            }
+        }
         if property_tag(&c.property, &c.path) == Some("IP")
             && !c.device.is_empty()
             && !c.interface.is_empty()
-            && c.evidence.iter().all(|e| e == "assessment:compare")
+            && c.evidence
+                .iter()
+                .all(|e| e == "assessment:compare" || e.starts_with("assessment:device-model="))
             && c.expected.parse::<std::net::Ipv4Addr>().is_ok()
             && !sentinel(&c.expected)
         {
@@ -761,7 +810,9 @@ fn attach_command_context(checks: &mut [Checkpoint]) {
         if property_tag(&c.property, &c.path) == Some("SUBNET")
             && !c.device.is_empty()
             && !c.interface.is_empty()
-            && c.evidence.iter().all(|e| e == "assessment:compare")
+            && c.evidence
+                .iter()
+                .all(|e| e == "assessment:compare" || e.starts_with("assessment:device-model="))
             && subnet_mask(&c.expected)
             && !sentinel(&c.expected)
         {
@@ -773,7 +824,9 @@ fn attach_command_context(checks: &mut [Checkpoint]) {
         if property_tag(&c.property, &c.path) == Some("IPV6_PREFIX")
             && !c.device.is_empty()
             && !c.interface.is_empty()
-            && c.evidence.iter().all(|e| e == "assessment:compare")
+            && c.evidence
+                .iter()
+                .all(|e| e == "assessment:compare" || e.starts_with("assessment:device-model="))
             && let Ok(prefix) = c.expected.parse::<u8>()
             && prefix <= 128
         {
@@ -781,8 +834,19 @@ fn attach_command_context(checks: &mut [Checkpoint]) {
         }
     }
     for c in checks {
+        if crate::commands::is_ospf_network_property(&c.property, &c.path) {
+            if let Some(values) = ospf_processes.get(&context(c)).filter(|v| v.len() == 1) {
+                c.evidence
+                    .push(format!("commands:ospf-process={}", values[0]));
+            }
+            if let Some(values) = ospf_areas.get(&context(c)).filter(|v| v.len() == 1) {
+                c.evidence.push(format!("commands:ospf-area={}", values[0]));
+            }
+        }
         if property_tag(&c.property, &c.path) == Some("SUBNET")
-            && c.evidence.iter().all(|e| e == "assessment:compare")
+            && c.evidence
+                .iter()
+                .all(|e| e == "assessment:compare" || e.starts_with("assessment:device-model="))
             && subnet_mask(&c.expected)
             && let Some(values) = addresses.get(&context(c)).filter(|v| v.len() == 1)
         {
@@ -790,7 +854,9 @@ fn attach_command_context(checks: &mut [Checkpoint]) {
                 .push(format!("commands:ipv4-address={}", values[0]));
         }
         if property_tag(&c.property, &c.path) == Some("IP")
-            && c.evidence.iter().all(|e| e == "assessment:compare")
+            && c.evidence
+                .iter()
+                .all(|e| e == "assessment:compare" || e.starts_with("assessment:device-model="))
             && c.expected.parse::<std::net::Ipv4Addr>().is_ok()
             && !sentinel(&c.expected)
             && let Some(values) = masks.get(&context(c)).filter(|v| v.len() == 1)
@@ -800,7 +866,9 @@ fn attach_command_context(checks: &mut [Checkpoint]) {
         if property_tag(&c.property, &c.path) == Some("IPV6_ADDRESSES")
             && !c.device.is_empty()
             && !c.interface.is_empty()
-            && c.evidence.iter().all(|e| e == "assessment:compare")
+            && c.evidence
+                .iter()
+                .all(|e| e == "assessment:compare" || e.starts_with("assessment:device-model="))
             && let Some((_, explicit_prefix)) = ipv6(&c.expected)
         {
             if let Some(prefix) = explicit_prefix

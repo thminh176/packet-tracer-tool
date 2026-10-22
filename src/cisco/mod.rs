@@ -1,6 +1,7 @@
 //! Typed, offline Cisco command knowledge. Documentation is not Packet Tracer execution evidence.
 use std::collections::BTreeMap;
 pub mod device_profile;
+pub mod mapping;
 pub mod parser;
 pub mod router;
 pub mod switch;

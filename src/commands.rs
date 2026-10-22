@@ -190,13 +190,34 @@ fn explicit_value(c: &Checkpoint) -> Result<String, &'static str> {
     }
     if is_ospf_network_property(&c.property, &c.path) {
         if let Ok(mut o) = crate::network_values::ParsedOspfNetwork::parse(&c.expected) {
+            let mut process_seen = o.process_id;
+            let area_number = |area: &str| {
+                area.parse::<u32>()
+                    .ok()
+                    .or_else(|| area.parse::<Ipv4Addr>().ok().map(u32::from))
+            };
+            let mut area_seen = o.area.as_deref().and_then(area_number);
             for ev in &c.evidence {
                 if let Some(pid_str) = ev.strip_prefix("commands:ospf-process=") {
-                    if let Ok(pid) = pid_str.parse::<u32>() {
-                        o = o.with_process_id(pid);
+                    let pid = pid_str
+                        .parse::<u16>()
+                        .ok()
+                        .filter(|n| *n > 0)
+                        .ok_or("Invalid explicit OSPF process metadata")?
+                        as u32;
+                    if process_seen.is_some_and(|seen| seen != pid) {
+                        return Err("Conflicting explicit OSPF process metadata");
                     }
+                    process_seen = Some(pid);
+                    o = o.with_process_id(pid);
                 }
                 if let Some(area_str) = ev.strip_prefix("commands:ospf-area=") {
+                    let area =
+                        area_number(area_str).ok_or("Invalid explicit OSPF area metadata")?;
+                    if area_seen.is_some_and(|seen| seen != area) {
+                        return Err("Conflicting explicit OSPF area metadata");
+                    }
+                    area_seen = Some(area);
                     o = o.with_area(area_str);
                 }
             }
@@ -205,7 +226,9 @@ fn explicit_value(c: &Checkpoint) -> Result<String, &'static str> {
             {
                 return Ok(format!("{pid} {} {} {}", o.network, o.wildcard_mask, area));
             }
-            return Err("OSPF requires an explicit process ID, network, wildcard and area; no defaults are inferred".into());
+            return Err(
+                "OSPF requires an explicit process ID, network, wildcard and area; no defaults are inferred",
+            );
         }
         return Ok(c.expected.clone());
     }
@@ -278,6 +301,22 @@ fn explicit_value(c: &Checkpoint) -> Result<String, &'static str> {
 }
 
 fn plan(c: &Checkpoint) -> Result<Plan, &'static str> {
+    if !is_gui(c) {
+        let explicit = explicit_value(c)?;
+        if let Some(request) = crate::cisco::mapping::request(c, &explicit)
+            && crate::cisco::registry()
+                .iter()
+                .any(|s| s.id == request.family)
+        {
+            let typed = crate::cisco::generate(&request);
+            if !typed.executable() {
+                return Err(
+                    "Recognized requirement is incomplete, incompatible or unsafe; inspect required parameters and device compatibility in Cisco Command Library.",
+                );
+            }
+            return legacy_plan(&typed);
+        }
+    }
     if !safe(&c.expected)
         || !safe(&c.interface)
         || !safe(&c.device)
@@ -577,6 +616,20 @@ pub fn generate(checkpoint: &Checkpoint) -> Command {
         Ok(v) => v,
         Err(e) => return unsupported(e),
     };
+    if !is_gui(checkpoint)
+        && let Some(req) = crate::cisco::mapping::request(checkpoint, &resolved)
+        && crate::cisco::registry().iter().any(|s| s.id == req.family)
+    {
+        let typed = crate::cisco::generate(&req);
+        if !typed.executable() {
+            return unsupported(&format!(
+                "{}; missing: {}; {}",
+                req.family,
+                typed.missing_parameters.join(", "),
+                typed.warnings.join("; ")
+            ));
+        }
+    }
     // Validate even GUI values before displaying them in guidance.
     if let Err(reason) = plan(checkpoint)
         && (!is_gui(checkpoint)
@@ -626,9 +679,35 @@ pub fn generate(checkpoint: &Checkpoint) -> Command {
         };
     }
     match plan(checkpoint) {
-        Ok(p) => Command { supported:true, gui:false, text:render(&[p]), explanation:"Review the explicit values and apply on the named device. No commands have been executed.".into() },
+        Ok(p) => Command { supported:true, gui:false, text:render(&[p]), explanation:"Review explicit values and device compatibility. Packet Tracer execution support is untested for this suggestion. No commands have been executed.".into() },
         Err(e) => unsupported(e),
     }
+}
+
+fn legacy_plan(typed: &crate::cisco::CommandPlan) -> Result<Plan, &'static str> {
+    use crate::cisco::ConfigMode;
+    let Some(first) = typed.commands.first() else {
+        return Err("No executable commands");
+    };
+    if typed.commands.iter().any(|c| c.mode != first.mode) {
+        return Err(
+            "Multiple configuration contexts require individual review in Cisco Command Library",
+        );
+    }
+    let context = match &first.mode {
+        ConfigMode::Global | ConfigMode::Exec => vec![],
+        ConfigMode::Interface(v) => vec![format!("interface {v}")],
+        ConfigMode::Router(v) => vec![format!("router {v}")],
+        ConfigMode::Vlan(v) => vec![format!("vlan {v}")],
+        ConfigMode::Acl(v) => vec![v.clone()],
+        ConfigMode::DhcpPool(v) => vec![format!("ip dhcp pool {v}")],
+        ConfigMode::Line(v) => vec![format!("line {v}")],
+    };
+    Ok(Plan {
+        context,
+        lines: typed.commands.iter().map(|c| c.text.clone()).collect(),
+        save: first.mode == ConfigMode::Exec,
+    })
 }
 
 fn render(plans: &[Plan]) -> String {
@@ -716,8 +795,7 @@ fn conflict_key(c: &Checkpoint, p: &Plan) -> Option<String> {
                 let pid = p
                     .context
                     .iter()
-                    .find_map(|c| c.strip_prefix("router ospf "))
-                    .unwrap_or("1");
+                    .find_map(|c| c.strip_prefix("router ospf "))?;
                 return Some(format!(
                     "{}:ospf:{pid}:{} {}",
                     p.context.join("/"),
