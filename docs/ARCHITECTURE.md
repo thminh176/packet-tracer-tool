@@ -1,0 +1,15 @@
+# Architecture
+
+The application is a single Rust executable. `model` defines serializable checkpoints, validation status, evidence, commands, and score summaries. `inspector` performs read-only decoding, XML parsing, recursive assessment extraction, snapshot identification, and conservative comparison. `commands` maps supported explicit requirements to context-aware IOS or Packet Tracer GUI instructions. `reports` escapes CSV and Markdown output. The eframe GUI owns navigation, background load jobs, preferences, and manual checklist state.
+
+Dependency direction: GUI ? inspector / commands / reports ? shared model. XML is retained for inspection. Parsing happens away from the UI thread; completed analysis is delivered through a channel. Automatic validation and manual checklist completion are separate stores. Only Passed contributes to verified score; Failed and Unverified remain distinct. Coverage counts verified passing and failing checks divided by all extracted checks.
+
+Unknown assessment leaves must remain visible. Snapshot roles require structural or explicit evidence rather than sibling order. Validators must retain explanations and evidence. Command support is narrower than extraction: insufficient context, unknown enum meanings, sentinel values and unsafe text produce an unsupported result instead of guessed commands. Scripts group commands by target device and preserve configuration contexts.
+
+## Original implementation and boundaries
+
+The XML extraction, validation, commands, reports, and UI are original Rust code. Container decoding uses the MIT-licensed pktfile dependency. No encoder is exposed by the application. Source files are never overwritten. Export paths must remain separate from input paths. PKA variants outside the dependency codec are reported as unsupported; encrypted activity passwords are not handled.
+
+## Performance
+
+Analysis records available decode, parsing, extraction and comparison timings. The release probe measures end-to-end duration and XML payload size without exporting decoded answers. See test results for measured values, memory/startup methodology, and remaining measurements.

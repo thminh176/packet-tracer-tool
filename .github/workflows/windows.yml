@@ -1,0 +1,22 @@
+name: Windows release checks
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+      - run: cargo build --locked --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PKA-Lab-Inspector-Windows-x86_64
+          path: |
+            target/release/pka-lab-inspector.exe
+            README.md
+            docs/
+            THIRD_PARTY_NOTICES.md
