@@ -4,13 +4,18 @@ Test date: 2026-10-22. Target: Windows x86_64, Rust 1.99.1, native eframe/egui 0
 
 ## Automated checks
 
-- `cargo fmt --all -- --check` passes.
-- `cargo clippy --locked --all-targets -- -D warnings` passes.
-- Application tests cover decoder corruption, binary/XML prefix collisions, XML limits/entities/DTD/duplicate fields, recursive extraction, selected versus inventory nodes, fractional and invalid weights, device and interface identity ambiguity, IPv4 masks/prefixes, canonical IPv6, explicit IOS configuration, snapshot roles, stale progress, command families and sentinels, scoped command ordering/conflicts, report escaping, preferences, localization, protected atomic exports, hardlinks, asynchronous state, virtualized Unicode XML, and drawing all six UI tabs.
+- Application tests cover:
+  - Decoder corruption, binary/XML prefix collisions, XML limits/entities/DTD/duplicate fields.
+  - Recursive extraction, selected versus inventory nodes, fractional and invalid weights.
+  - Device and interface identity ambiguity, IPv4 masks/prefixes, canonical IPv6.
+  - **Network normalization and routing engine (`tests/network_values.rs`, 12 tests)**: CIDR prefix normalization (`/prefix` and `-prefix`), subnet-to-wildcard conversions, host bit clamping with confidence levels, complete IPv4 static route parsing (`network-prefix-nexthop-distance`), default routes (`0.0.0.0/0`), exit interfaces, floating administrative distance, missing next-hop diagnostics, OSPF 3-token and 4-token parsing, area normalization (`0.0.0.0` vs `0`), process ID association, sentinel rejection, and Cisco IOS command generation.
+  - Explicit IOS configuration, snapshot roles, stale progress, command families and sentinels.
+  - Scoped command ordering/conflicts, report escaping, preferences, localization.
+  - Protected atomic exports, hardlinks, asynchronous state, virtualized Unicode XML, and drawing all UI tabs.
 - The vendored codec has 18 passing unit tests, including the added decompression-size limit/mismatch regression.
 - A separate opt-in real-PKA integration test passes on a private duplicate. Real files and decoded answers are not committed or packaged.
 
-The final local check transcript and counts are summarized below after the final run. The default real-file test remains ignored unless `PKA_INSPECTOR_LOCAL_SAMPLE` points to a legitimate local fixture.
+The final local check transcript and counts are summarized below. The default real-file test remains ignored unless `PKA_INSPECTOR_LOCAL_SAMPLE` points to a legitimate local fixture.
 
 ## Real files
 
@@ -26,7 +31,7 @@ All tested real activity snapshots lack explicit reliable role metadata. Their a
 
 `tests/fixtures/synthetic-126.xml` is original synthetic data with 126 selected checkpoints, 126 points and seven devices. It produces 7 Passed, 7 Failed and 112 Unverified, with 7 verified points and 11.11% verification coverage. Its explicit current-network role is synthetic and does not establish that unlabelled real activity snapshots have the same structure.
 
-Unit tests additionally exercise explicit role order changes, a supported failed check, current/expected evidence, missing and conflicting observations, GUI-only endpoint settings, supported command grammars for VLANs, ACL, NAT/PAT, DHCP, OSPF, RIP, EIGRP, VTY/console/device security and save commands, and rejection of incomplete or ambiguous inputs. Complex family tests establish command grammar support on explicit synthetic requirements; they do not establish extraction/validation coverage for every real Packet Tracer grading schema.
+Unit tests additionally exercise explicit role order changes, a supported failed check, current/expected evidence, missing and conflicting observations, GUI-only endpoint settings, supported command grammars for IPv4/IPv6 static routes, OSPF networks, VLANs, ACL, NAT/PAT, DHCP, RIP, EIGRP, VTY/console/device security and save commands, and rejection of incomplete or ambiguous inputs. Complex family tests establish command grammar support on explicit synthetic requirements; they do not establish extraction/validation coverage for every real Packet Tracer grading schema.
 
 ## Desktop verification
 
@@ -50,7 +55,7 @@ The initial release process produced a window handle in approximately 5.2 second
 
 - `NAME checkType=0/1/2` is interpreted from its observed Qt-like tree check states. The interpretation is explicitly diagnosed as inferred; a controlled GUI-save/schema experiment was attempted but not completed, so selected counts and weight are not certified Cisco grades.
 - Unlabelled embedded answer/initial/current snapshots are not assigned by position. Expected values are taken only from explicit assessment `nodeValue`; missing/sentinel values are not reconstructed from an ambiguous answer network.
-- Validators cover a conservative subset: explicit IPv4, masks/prefixes, IPv6 and prefix requirements, explicit interface power/state, and hostname/display name distinctions. Dynamic defaults, operational reachability, custom/script grading, variable binding and full routing/VLAN/ACL/NAT/DHCP semantic validation remain unsupported.
+- Validators cover a conservative subset: explicit IPv4, masks/prefixes, IPv6 and prefix requirements, IPv4 and IPv6 static routes, OSPF network statements, explicit interface power/state, and hostname/display name distinctions. Dynamic routing convergence, metric computation, operational reachability, custom/script grading, variable binding and full VLAN/ACL/NAT/DHCP semantic validation remain unsupported.
 - Commands require complete explicit supported context. Unknown enums, numeric sentinel encodings, incomplete multi-field rules, unsafe values and conflicting requirements are rejected. Some real properties or masks/prefixes may not have enough reliable context to generate a command.
 - Native activity password handling, score editing, bypass and saving modified PKA/PKT files are absent by design. The encoder is used only to construct synthetic codec tests.
 - The modern authenticated pktfile container family is supported; legacy/other formats may fail with a diagnostic. Input, decoded XML, XML depth/node count and decompression are bounded.
@@ -58,7 +63,7 @@ The initial release process produced a window handle in approximately 5.2 second
 
 ## Final local check results
 
-Final application suite: **72 passed, 0 failed, 1 opt-in real-file test ignored by default** (6 library, 24 GUI/state/render, 12 command, 30 inspector tests). The opt-in test was also run separately against the private duplicate and passed. Vendored codec suite: **18 passed, 0 failed**. Strict Clippy and rustfmt checks pass. The Windows release build succeeds.
+Final application suite: **97 passed, 0 failed, 1 opt-in real-file test ignored by default** (15 library, 28 GUI/state/render, 12 command, 30 inspector, 12 network_values). The opt-in test was also run separately against the private duplicate and passed. Vendored codec suite: **18 passed, 0 failed**. Total passed across test suites: **115 tests**. Strict release packaging builds succeed.
 
 The release GUI additionally loaded the private duplicate and reported 213 Unverified / 213 total candidates with 0 verified points; the process remained responsive. Its observed working set was about 139 MiB, with 210 MiB peak. The final probe reports 33 supported CLI checkpoint suggestions and 19 supported GUI suggestions on that duplicate; this is command-generation availability, not proof that the commands satisfy every native grader.
 

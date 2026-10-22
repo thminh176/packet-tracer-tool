@@ -79,7 +79,9 @@ impl NormalizedNetwork {
         let explanation = if had_host_bits {
             format!("Host address {ip} clamped to network address {network} with prefix /{prefix}")
         } else {
-            format!("Valid network {network}/{prefix} (mask {subnet_mask}, wildcard {wildcard_mask})")
+            format!(
+                "Valid network {network}/{prefix} (mask {subnet_mask}, wildcard {wildcard_mask})"
+            )
         };
 
         Some(Self {
@@ -334,10 +336,9 @@ impl ParsedStaticRoute {
             .split_whitespace()
             .collect();
         if tokens.len() >= 3 {
-            if let (Ok(net_addr), Ok(mask)) = (
-                tokens[0].parse::<Ipv4Addr>(),
-                tokens[1].parse::<Ipv4Addr>(),
-            ) {
+            if let (Ok(net_addr), Ok(mask)) =
+                (tokens[0].parse::<Ipv4Addr>(), tokens[1].parse::<Ipv4Addr>())
+            {
                 if is_contiguous_mask(mask) && u32::from(net_addr) & !u32::from(mask) != 0 {
                     return Err(format!(
                         "Inconsistent destination address {net_addr} and subnet mask {mask} (host bits are set)"
@@ -390,8 +391,11 @@ impl ParsedStaticRoute {
             return None;
         }
 
-        let destination =
-            NormalizedNetwork::from_ip_and_prefix(net_addr, prefix, format!("{net_addr}/{prefix}"))?;
+        let destination = NormalizedNetwork::from_ip_and_prefix(
+            net_addr,
+            prefix,
+            format!("{net_addr}/{prefix}"),
+        )?;
         if net_addr != destination.network {
             // Destination address has non-zero host bits for prefix length
             return None;
@@ -499,12 +503,10 @@ impl ParsedStaticRoute {
         if !self.is_complete {
             return None;
         }
-        let target = if let Some(ip) = self.next_hop {
-            ip.to_string()
-        } else if let Some(ref iface) = self.exit_interface {
-            iface.clone()
-        } else {
-            return None;
+        let target = match (&self.next_hop, &self.exit_interface) {
+            (Some(ip), _) => ip.to_string(),
+            (_, Some(iface)) => iface.clone(),
+            (None, None) => return None,
         };
 
         let mut cmd = format!(
@@ -596,12 +598,10 @@ impl ParsedIpv6StaticRoute {
         if !self.is_complete {
             return None;
         }
-        let target = if let Some(ip) = self.next_hop {
-            ip.to_string()
-        } else if let Some(ref iface) = self.exit_interface {
-            iface.clone()
-        } else {
-            return None;
+        let target = match (&self.next_hop, &self.exit_interface) {
+            (Some(ip), _) => ip.to_string(),
+            (_, Some(iface)) => iface.clone(),
+            (None, None) => return None,
         };
 
         let mut cmd = format!("ipv6 route {}/{} {}", self.destination, self.prefix, target);
@@ -678,7 +678,9 @@ impl ParsedOspfNetwork {
         // Case 2: Assessment format "<net> <wildcard> <area>" e.g. "10.0.0.0 0.0.0.3 0"
         let tokens: Vec<&str> = trimmed.split_whitespace().collect();
         if tokens.len() == 3 {
-            if let (Ok(net), Ok(wildcard)) = (tokens[0].parse::<Ipv4Addr>(), tokens[1].parse::<Ipv4Addr>()) {
+            if let (Ok(net), Ok(wildcard)) =
+                (tokens[0].parse::<Ipv4Addr>(), tokens[1].parse::<Ipv4Addr>())
+            {
                 let area = tokens[2].to_string();
                 if is_sentinel(&area) || area == "4294967295" {
                     return Err("Sentinel or invalid area in OSPF specification".into());

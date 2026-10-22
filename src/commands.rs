@@ -384,7 +384,9 @@ fn plan(c: &Checkpoint) -> Result<Plan, &'static str> {
         "defaultgateway" | "gateway" if t.len() == 1 && ip(value) => {
             format!("ip default-gateway {value}")
         }
-        p if (p == "staticroute" || p == "ipv4staticroute" || is_static_route_property(&c.property, &c.path))
+        p if (p == "staticroute"
+            || p == "ipv4staticroute"
+            || is_static_route_property(&c.property, &c.path))
             && (t.len() == 3 || t.len() == 4)
             && network(t[0], t[1])
             && (ip(t[2]) || iface(t[2]))
@@ -395,7 +397,10 @@ fn plan(c: &Checkpoint) -> Result<Plan, &'static str> {
         p if (p == "ipv6staticroute" || is_ipv6_static_route_property(&c.property, &c.path))
             && (t.len() == 2 || t.len() == 3)
             && prefix6(t[0])
-            && (t[1].parse::<Ipv6Addr>().is_ok_and(|a| a.segments()[0] & 0xffc0 != 0xfe80) || iface(t[1]))
+            && (t[1]
+                .parse::<Ipv6Addr>()
+                .is_ok_and(|a| a.segments()[0] & 0xffc0 != 0xfe80)
+                || iface(t[1]))
             && (t.len() == 2 || number(t[2], 1, 254)) =>
         {
             format!("ipv6 route {}", t.join(" "))
@@ -693,7 +698,12 @@ fn conflict_key(c: &Checkpoint, p: &Plan) -> Option<String> {
         if let Some(line) = p.lines.first() {
             let words: Vec<_> = line.split_whitespace().collect();
             if words.len() >= 4 && words[0] == "ip" && words[1] == "route" {
-                return Some(format!("{}:route:{} {}", p.context.join("/"), words[2], words[3]));
+                return Some(format!(
+                    "{}:route:{} {}",
+                    p.context.join("/"),
+                    words[2],
+                    words[3]
+                ));
             }
         }
     }
@@ -709,8 +719,17 @@ fn conflict_key(c: &Checkpoint, p: &Plan) -> Option<String> {
         if let Some(line) = p.lines.first() {
             let words: Vec<_> = line.split_whitespace().collect();
             if words.len() >= 5 && words[0] == "network" {
-                let pid = p.context.iter().find_map(|c| c.strip_prefix("router ospf ")).unwrap_or("1");
-                return Some(format!("{}:ospf:{pid}:{} {}", p.context.join("/"), words[1], words[2]));
+                let pid = p
+                    .context
+                    .iter()
+                    .find_map(|c| c.strip_prefix("router ospf "))
+                    .unwrap_or("1");
+                return Some(format!(
+                    "{}:ospf:{pid}:{} {}",
+                    p.context.join("/"),
+                    words[1],
+                    words[2]
+                ));
             }
         }
     }

@@ -867,7 +867,11 @@ fn ios_observations(device: &Node, interface: &str, tag: &str) -> Vec<String> {
         for line in &lines {
             let trimmed = line.trim();
             if let Some(rest) = trimmed.strip_prefix("router ospf ") {
-                active_pid = rest.trim().parse::<u32>().ok().filter(|&p| p > 0 && p < 65535);
+                active_pid = rest
+                    .trim()
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|&p| p > 0 && p < 65535);
                 continue;
             }
             if matches!(trimmed, "!" | "exit" | "end")
@@ -960,7 +964,10 @@ fn observations(node: &Node, device: &str, interface: &str, tag: &str) -> Vec<St
         return Vec::new();
     }
     let engine = matching[0].unique_child("ENGINE").unwrap_or(matching[0]);
-    if matches!(tag, "HOSTNAME" | "STATIC_ROUTE" | "IPV6_STATIC_ROUTE" | "OSPF_NETWORK") {
+    if matches!(
+        tag,
+        "HOSTNAME" | "STATIC_ROUTE" | "IPV6_STATIC_ROUTE" | "OSPF_NETWORK"
+    ) {
         return ios_observations(matching[0], interface, tag);
     }
     if interface.is_empty() {
@@ -1111,10 +1118,9 @@ pub fn compare(activity: &mut Analysis, progress: &Analysis) {
                         "expected assessment / {}: {}",
                         check.path, check.expected
                     ));
-                    check.evidence.push(format!(
-                        "current network / {} / {tag}: none",
-                        check.device
-                    ));
+                    check
+                        .evidence
+                        .push(format!("current network / {} / {tag}: none", check.device));
                 }
             }
             continue;
@@ -1178,9 +1184,8 @@ pub fn compare(activity: &mut Analysis, progress: &Analysis) {
             "OSPF_NETWORK" => {
                 "Compared OSPF network statements against device running-config".into()
             }
-            _ => {
-                "Compared supported explicit values in a uniquely identified device/interface".into()
-            }
+            _ => "Compared supported explicit values in a uniquely identified device/interface"
+                .into(),
         };
         check.evidence.push(format!(
             "expected assessment / {}: {}",

@@ -6,7 +6,7 @@ use std::{
         Arc,
         mpsc::{Receiver, Sender, channel},
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use eframe::egui;
@@ -16,6 +16,7 @@ use pka_lab_inspector::commands;
 use pka_lab_inspector::inspector;
 use pka_lab_inspector::localization::Localizer;
 use pka_lab_inspector::model::{Analysis, Checkpoint, Status};
+use pka_lab_inspector::network_values;
 use pka_lab_inspector::reports;
 
 /// Available tabs in the inspector UI.
@@ -123,6 +124,222 @@ pub enum LoadMessage {
     },
 }
 
+/// Recognized network protocols that receive prominent visual badges.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProtocolBadge {
+    Ipv4StaticRoute,
+    Ipv6StaticRoute,
+    OspfNetwork,
+}
+
+impl ProtocolBadge {
+    pub fn badge_text(&self) -> &'static str {
+        match self {
+            Self::Ipv4StaticRoute => "[IPv4 Static Route]",
+            Self::Ipv6StaticRoute => "[IPv6 Static Route]",
+            Self::OspfNetwork => "[OSPF Network]",
+        }
+    }
+
+    pub fn catalog_key(&self) -> &'static str {
+        match self {
+            Self::Ipv4StaticRoute => "detail.badge_ipv4_static",
+            Self::Ipv6StaticRoute => "detail.badge_ipv6_static",
+            Self::OspfNetwork => "detail.badge_ospf_network",
+        }
+    }
+}
+
+/// Detect whether a checkpoint represents an IPv4 static route, IPv6 static route, or OSPF network.
+pub fn detect_protocol(c: &Checkpoint) -> Option<ProtocolBadge> {
+    if commands::is_ipv6_static_route_property(&c.property, &c.path)
+        || network_values::ParsedIpv6StaticRoute::parse(&c.expected).is_some()
+    {
+        return Some(ProtocolBadge::Ipv6StaticRoute);
+    }
+
+    if commands::is_static_route_property(&c.property, &c.path)
+        || network_values::ParsedStaticRoute::parse(&c.expected).is_ok()
+    {
+        return Some(ProtocolBadge::Ipv4StaticRoute);
+    }
+
+    if commands::is_ospf_network_property(&c.property, &c.path)
+        || network_values::ParsedOspfNetwork::parse(&c.expected).is_ok()
+    {
+        return Some(ProtocolBadge::OspfNetwork);
+    }
+
+    None
+}
+
+/// Structured network values extracted from a static route or OSPF statement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkDetail {
+    pub badge: ProtocolBadge,
+    pub raw_value: String,
+    pub normalized_cidr: String,
+    pub subnet_mask: Option<String>,
+    pub wildcard_mask: Option<String>,
+    pub next_hop: Option<String>,
+    pub exit_interface: Option<String>,
+    pub distance: Option<u8>,
+    pub area: Option<String>,
+    pub process_id: Option<u32>,
+}
+
+/// Extract detailed network parameters (raw, CIDR, subnet mask, wildcard) from a checkpoint.
+pub fn extract_network_detail(c: &Checkpoint) -> Option<NetworkDetail> {
+    let badge = detect_protocol(c)?;
+    match badge {
+        ProtocolBadge::Ipv4StaticRoute => {
+            if let Ok(route) = network_values::ParsedStaticRoute::parse(&c.expected) {
+                Some(NetworkDetail {
+                    badge,
+                    raw_value: c.expected.clone(),
+                    normalized_cidr: route.destination.cidr(),
+                    subnet_mask: Some(route.destination.subnet_mask.to_string()),
+                    wildcard_mask: Some(route.destination.wildcard_mask.to_string()),
+                    next_hop: route.next_hop.map(|ip| ip.to_string()),
+                    exit_interface: route.exit_interface,
+                    distance: route.distance,
+                    area: None,
+                    process_id: None,
+                })
+            } else if let Some(net) = network_values::NormalizedNetwork::parse(&c.expected) {
+                Some(NetworkDetail {
+                    badge,
+                    raw_value: c.expected.clone(),
+                    normalized_cidr: net.cidr(),
+                    subnet_mask: Some(net.subnet_mask.to_string()),
+                    wildcard_mask: Some(net.wildcard_mask.to_string()),
+                    next_hop: None,
+                    exit_interface: None,
+                    distance: None,
+                    area: None,
+                    process_id: None,
+                })
+            } else {
+                Some(NetworkDetail {
+                    badge,
+                    raw_value: c.expected.clone(),
+                    normalized_cidr: c.expected.clone(),
+                    subnet_mask: None,
+                    wildcard_mask: None,
+                    next_hop: None,
+                    exit_interface: None,
+                    distance: None,
+                    area: None,
+                    process_id: None,
+                })
+            }
+        }
+        ProtocolBadge::Ipv6StaticRoute => {
+            if let Some(route) = network_values::ParsedIpv6StaticRoute::parse(&c.expected) {
+                Some(NetworkDetail {
+                    badge,
+                    raw_value: c.expected.clone(),
+                    normalized_cidr: format!("{}/{}", route.destination, route.prefix),
+                    subnet_mask: Some(format!("/{}", route.prefix)),
+                    wildcard_mask: None,
+                    next_hop: route.next_hop.map(|ip| ip.to_string()),
+                    exit_interface: route.exit_interface,
+                    distance: route.distance,
+                    area: None,
+                    process_id: None,
+                })
+            } else {
+                Some(NetworkDetail {
+                    badge,
+                    raw_value: c.expected.clone(),
+                    normalized_cidr: c.expected.clone(),
+                    subnet_mask: None,
+                    wildcard_mask: None,
+                    next_hop: None,
+                    exit_interface: None,
+                    distance: None,
+                    area: None,
+                    process_id: None,
+                })
+            }
+        }
+        ProtocolBadge::OspfNetwork => {
+            if let Ok(ospf) = network_values::ParsedOspfNetwork::parse(&c.expected) {
+                let prefix = network_values::wildcard_to_prefix(ospf.wildcard_mask);
+                let cidr = prefix
+                    .map(|p| format!("{}/{}", ospf.network, p))
+                    .unwrap_or_else(|| ospf.network.to_string());
+                let subnet =
+                    network_values::wildcard_to_subnet(ospf.wildcard_mask).map(|m| m.to_string());
+                Some(NetworkDetail {
+                    badge,
+                    raw_value: c.expected.clone(),
+                    normalized_cidr: cidr,
+                    subnet_mask: subnet,
+                    wildcard_mask: Some(ospf.wildcard_mask.to_string()),
+                    next_hop: None,
+                    exit_interface: None,
+                    distance: None,
+                    area: ospf.area,
+                    process_id: ospf.process_id,
+                })
+            } else if let Some(net) = network_values::NormalizedNetwork::parse(&c.expected) {
+                Some(NetworkDetail {
+                    badge,
+                    raw_value: c.expected.clone(),
+                    normalized_cidr: net.cidr(),
+                    subnet_mask: Some(net.subnet_mask.to_string()),
+                    wildcard_mask: Some(net.wildcard_mask.to_string()),
+                    next_hop: None,
+                    exit_interface: None,
+                    distance: None,
+                    area: None,
+                    process_id: None,
+                })
+            } else {
+                Some(NetworkDetail {
+                    badge,
+                    raw_value: c.expected.clone(),
+                    normalized_cidr: c.expected.clone(),
+                    subnet_mask: None,
+                    wildcard_mask: None,
+                    next_hop: None,
+                    exit_interface: None,
+                    distance: None,
+                    area: None,
+                    process_id: None,
+                })
+            }
+        }
+    }
+}
+
+/// Render a styled protocol badge pill widget.
+pub fn render_protocol_badge(ui: &mut egui::Ui, badge: ProtocolBadge, text: &str) {
+    let (bg_color, fg_color) = match badge {
+        ProtocolBadge::Ipv4StaticRoute => (
+            egui::Color32::from_rgb(27, 94, 32),
+            egui::Color32::from_rgb(200, 230, 201),
+        ),
+        ProtocolBadge::Ipv6StaticRoute => (
+            egui::Color32::from_rgb(13, 71, 161),
+            egui::Color32::from_rgb(187, 222, 251),
+        ),
+        ProtocolBadge::OspfNetwork => (
+            egui::Color32::from_rgb(230, 81, 0),
+            egui::Color32::from_rgb(255, 224, 178),
+        ),
+    };
+
+    egui::Frame::NONE
+        .fill(bg_color)
+        .corner_radius(egui::CornerRadius::same(4))
+        .inner_margin(egui::Margin::symmetric(8, 3))
+        .show(ui, |ui| {
+            ui.label(egui::RichText::new(text).color(fg_color).strong());
+        });
+}
+
 /// Main Inspector Application State.
 pub struct InspectorApp {
     pub localizer: Arc<Localizer>,
@@ -154,6 +371,7 @@ pub struct InspectorApp {
     pub loading_description: Option<String>,
     pub status_message: Option<String>,
     pub status_timestamp: Option<Instant>,
+    pub copy_notification: Option<(String, Instant)>,
     pub show_settings: bool,
 
     // Preferences and checklists
@@ -194,6 +412,7 @@ impl InspectorApp {
             loading_description: None,
             status_message: None,
             status_timestamp: Some(Instant::now()),
+            copy_notification: None,
             show_settings: false,
 
             preferences: Preferences::default(),
@@ -615,13 +834,69 @@ impl InspectorApp {
             .collect()
     }
 
-    /// Copy text to system clipboard via egui context.
-    pub fn copy_text_with_feedback(&mut self, ctx: &egui::Context, text: String, _label: &str) {
+    /// Copy text to system clipboard via egui context with immediate visual feedback.
+    pub fn copy_text_with_feedback(&mut self, ctx: &egui::Context, text: String, label: &str) {
         ctx.copy_text(text);
-        self.set_status(
-            self.localizer
-                .text(&self.preferences.language, "action.copied"),
-        );
+        let base_msg = self
+            .localizer
+            .text(&self.preferences.language, "action.copied");
+        let full_msg = if !label.trim().is_empty() {
+            format!("{base_msg}: {label}")
+        } else {
+            base_msg
+        };
+        self.copy_notification = Some((full_msg.clone(), Instant::now()));
+        self.set_status(full_msg);
+        ctx.request_repaint();
+    }
+
+    /// Render immediate toast notification overlay for user actions like Copy.
+    pub fn render_notification(&self, ctx: &egui::Context) {
+        if let Some((ref msg, ts)) = self.copy_notification {
+            let elapsed = ts.elapsed();
+            if elapsed < Duration::from_secs(3) {
+                let opacity = if elapsed < Duration::from_millis(2200) {
+                    1.0
+                } else {
+                    (1.0 - (elapsed.as_secs_f32() - 2.2) / 0.8).clamp(0.0, 1.0)
+                };
+                let alpha = (opacity * 255.0) as u8;
+
+                egui::Area::new(egui::Id::new("copy_notification_toast"))
+                    .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-20.0, -45.0))
+                    .order(egui::Order::Foreground)
+                    .interactable(false)
+                    .show(ctx, |ui| {
+                        egui::Frame::popup(ui.style())
+                            .fill(egui::Color32::from_rgba_premultiplied(20, 55, 25, alpha))
+                            .stroke(egui::Stroke::new(
+                                1.5_f32,
+                                egui::Color32::from_rgba_premultiplied(76, 175, 80, alpha),
+                            ))
+                            .corner_radius(egui::CornerRadius::same(6))
+                            .inner_margin(egui::Margin::symmetric(14, 8))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        egui::RichText::new("✔")
+                                            .color(egui::Color32::from_rgba_premultiplied(
+                                                129, 199, 132, alpha,
+                                            ))
+                                            .strong(),
+                                    );
+                                    ui.label(
+                                        egui::RichText::new(msg)
+                                            .color(egui::Color32::from_rgba_premultiplied(
+                                                255, 255, 255, alpha,
+                                            ))
+                                            .strong(),
+                                    );
+                                });
+                            });
+                    });
+                ctx.request_repaint();
+            }
+        }
     }
 
     /// Handle keyboard shortcuts.
@@ -1165,7 +1440,20 @@ impl InspectorApp {
                         ui.spinner();
                         ui.label(tr("status.loading"));
                     } else if let Some(ref msg) = self.status_message {
-                        ui.label(msg);
+                        let is_recent_copy = self
+                            .status_timestamp
+                            .map(|ts| ts.elapsed() < Duration::from_secs(3))
+                            .unwrap_or(false)
+                            && msg.contains(&tr("action.copied"));
+                        if is_recent_copy {
+                            ui.label(
+                                egui::RichText::new(format!("✔ {msg}"))
+                                    .color(egui::Color32::LIGHT_GREEN)
+                                    .strong(),
+                            );
+                        } else {
+                            ui.label(msg);
+                        }
                     } else {
                         ui.label(tr("status.ready"));
                     }
@@ -1433,7 +1721,7 @@ impl InspectorApp {
         let indices = self.filtered_checkpoint_indices();
         let mut selected = None;
         let mut manual = None;
-        let mut copied = None;
+        let mut copied: Option<(String, String)> = None;
         ui.horizontal(|ui| {
             ui.label(catalog.format(
                 &lang,
@@ -1448,7 +1736,7 @@ impl InspectorApp {
                     ..Default::default()
                 };
                 if let Ok(csv) = reports::csv(&subset) {
-                    copied = Some(csv);
+                    copied = Some((csv, tr("ui.copy_csv_of_filtered").to_string()));
                 }
             }
         });
@@ -1501,6 +1789,30 @@ impl InspectorApp {
                                         ];
                                         for (value, width) in values.iter().zip(widths[1..6].iter())
                                         {
+                                            let hover_text = if *value == c.expected.as_str() {
+                                                if let Some(detail) = extract_network_detail(c) {
+                                                    format!(
+                                                        "{}\n{} {}\n{} {}\n{} {}",
+                                                        detail.badge.badge_text(),
+                                                        tr("detail.normalized_cidr"),
+                                                        detail.normalized_cidr,
+                                                        tr("detail.subnet_mask"),
+                                                        detail
+                                                            .subnet_mask
+                                                            .as_deref()
+                                                            .unwrap_or("-"),
+                                                        tr("detail.wildcard_mask"),
+                                                        detail
+                                                            .wildcard_mask
+                                                            .as_deref()
+                                                            .unwrap_or("-"),
+                                                    )
+                                                } else {
+                                                    (*value).to_string()
+                                                }
+                                            } else {
+                                                (*value).to_string()
+                                            };
                                             if ui
                                                 .add_sized(
                                                     [*width, 26.0],
@@ -1510,7 +1822,7 @@ impl InspectorApp {
                                                         *value,
                                                     ),
                                                 )
-                                                .on_hover_text(*value)
+                                                .on_hover_text(hover_text)
                                                 .clicked()
                                             {
                                                 selected = Some(c.id.clone());
@@ -1551,7 +1863,10 @@ impl InspectorApp {
                                             .on_hover_text(catalog.message(&lang, &cmd.explanation))
                                             .clicked()
                                         {
-                                            copied = Some(cmd.text);
+                                            copied = Some((
+                                                cmd.text,
+                                                format!("{} {}", c.device, c.property),
+                                            ));
                                         }
                                     })
                                 });
@@ -1566,8 +1881,8 @@ impl InspectorApp {
         if let Some((id, checked)) = manual {
             self.set_manual_check(&id, checked);
         }
-        if let Some(text) = copied {
-            self.copy_text_with_feedback(ctx, text, "");
+        if let Some((text, label)) = copied {
+            self.copy_text_with_feedback(ctx, text, &label);
         }
     }
 
@@ -1600,6 +1915,14 @@ impl InspectorApp {
                         ui.heading(&c.device);
                         ui.label(&c.interface);
                         ui.strong(&c.property);
+
+                        // Protocol badge if applicable
+                        if let Some(badge) = detect_protocol(&c) {
+                            ui.add_space(2.0);
+                            render_protocol_badge(ui, badge, &tr(badge.catalog_key()));
+                            ui.add_space(4.0);
+                        }
+
                         for (key, value) in [
                             ("table.expected", c.expected.as_str()),
                             ("table.current", c.current.as_deref().unwrap_or("?")),
@@ -1609,6 +1932,177 @@ impl InspectorApp {
                             ui.label(egui::RichText::new(tr(key)).weak());
                             ui.label(value);
                         }
+
+                        // Network Details display for static routes and OSPF networks
+                        if let Some(detail) = extract_network_detail(&c) {
+                            ui.separator();
+                            ui.strong(tr("detail.network_details"));
+                            egui::Frame::group(ui.style())
+                                .inner_margin(egui::Margin::same(8))
+                                .show(ui, |ui| {
+                                    ui.label(egui::RichText::new(tr("detail.raw_value")).weak());
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(&detail.raw_value).monospace(),
+                                        )
+                                        .wrap(),
+                                    );
+
+                                    ui.label(
+                                        egui::RichText::new(tr("detail.normalized_cidr")).weak(),
+                                    );
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(&detail.normalized_cidr)
+                                                .monospace()
+                                                .strong(),
+                                        )
+                                        .wrap(),
+                                    );
+
+                                    if let Some(ref mask) = detail.subnet_mask {
+                                        ui.label(
+                                            egui::RichText::new(tr("detail.subnet_mask")).weak(),
+                                        );
+                                        ui.add(
+                                            egui::Label::new(egui::RichText::new(mask).monospace())
+                                                .wrap(),
+                                        );
+                                    }
+
+                                    if let Some(ref wildcard) = detail.wildcard_mask {
+                                        ui.label(
+                                            egui::RichText::new(tr("detail.wildcard_mask")).weak(),
+                                        );
+                                        ui.add(
+                                            egui::Label::new(
+                                                egui::RichText::new(wildcard).monospace(),
+                                            )
+                                            .wrap(),
+                                        );
+                                    }
+
+                                    if let Some(ref nh) = detail.next_hop {
+                                        ui.label(egui::RichText::new(tr("detail.next_hop")).weak());
+                                        ui.add(
+                                            egui::Label::new(egui::RichText::new(nh).monospace())
+                                                .wrap(),
+                                        );
+                                    }
+                                    if let Some(ref iface) = detail.exit_interface {
+                                        ui.label(
+                                            egui::RichText::new(tr("detail.exit_interface")).weak(),
+                                        );
+                                        ui.add(
+                                            egui::Label::new(
+                                                egui::RichText::new(iface).monospace(),
+                                            )
+                                            .wrap(),
+                                        );
+                                    }
+                                    if let Some(dist) = detail.distance {
+                                        ui.label(egui::RichText::new(tr("detail.distance")).weak());
+                                        ui.add(
+                                            egui::Label::new(
+                                                egui::RichText::new(dist.to_string()).monospace(),
+                                            )
+                                            .wrap(),
+                                        );
+                                    }
+                                    if let Some(ref area) = detail.area {
+                                        ui.label(
+                                            egui::RichText::new(tr("detail.ospf_area")).weak(),
+                                        );
+                                        ui.add(
+                                            egui::Label::new(egui::RichText::new(area).monospace())
+                                                .wrap(),
+                                        );
+                                    }
+                                    if let Some(pid) = detail.process_id {
+                                        ui.label(
+                                            egui::RichText::new(tr("detail.ospf_process")).weak(),
+                                        );
+                                        ui.add(
+                                            egui::Label::new(
+                                                egui::RichText::new(pid.to_string()).monospace(),
+                                            )
+                                            .wrap(),
+                                        );
+                                    }
+                                });
+
+                            if let Some(ref curr_str) = c.current
+                                && !curr_str.trim().is_empty()
+                                && curr_str != "?"
+                            {
+                                let curr_cp = Checkpoint {
+                                    property: c.property.clone(),
+                                    path: c.path.clone(),
+                                    expected: curr_str.clone(),
+                                    ..Default::default()
+                                };
+                                if let Some(curr_detail) = extract_network_detail(&curr_cp) {
+                                    ui.add_space(4.0);
+                                    ui.strong(tr("detail.current_network"));
+                                    egui::Frame::group(ui.style())
+                                        .inner_margin(egui::Margin::same(8))
+                                        .show(ui, |ui| {
+                                            ui.label(
+                                                egui::RichText::new(tr("detail.raw_value")).weak(),
+                                            );
+                                            ui.add(
+                                                egui::Label::new(
+                                                    egui::RichText::new(&curr_detail.raw_value)
+                                                        .monospace(),
+                                                )
+                                                .wrap(),
+                                            );
+
+                                            ui.label(
+                                                egui::RichText::new(tr("detail.normalized_cidr"))
+                                                    .weak(),
+                                            );
+                                            ui.add(
+                                                egui::Label::new(
+                                                    egui::RichText::new(
+                                                        &curr_detail.normalized_cidr,
+                                                    )
+                                                    .monospace()
+                                                    .strong(),
+                                                )
+                                                .wrap(),
+                                            );
+
+                                            if let Some(ref mask) = curr_detail.subnet_mask {
+                                                ui.label(
+                                                    egui::RichText::new(tr("detail.subnet_mask"))
+                                                        .weak(),
+                                                );
+                                                ui.add(
+                                                    egui::Label::new(
+                                                        egui::RichText::new(mask).monospace(),
+                                                    )
+                                                    .wrap(),
+                                                );
+                                            }
+
+                                            if let Some(ref wildcard) = curr_detail.wildcard_mask {
+                                                ui.label(
+                                                    egui::RichText::new(tr("detail.wildcard_mask"))
+                                                        .weak(),
+                                                );
+                                                ui.add(
+                                                    egui::Label::new(
+                                                        egui::RichText::new(wildcard).monospace(),
+                                                    )
+                                                    .wrap(),
+                                                );
+                                            }
+                                        });
+                                }
+                            }
+                        }
+
                         ui.separator();
                         ui.strong(tr("detail.explanation"));
                         ui.label(catalog.message(&lang, &c.explanation));
@@ -1626,7 +2120,7 @@ impl InspectorApp {
                         if cmd.supported {
                             ui.monospace(&cmd.text);
                             if ui.button(tr("action.copy_checkpoint")).clicked() {
-                                copy = Some(cmd.text);
+                                copy = Some((cmd.text, format!("{} {}", c.device, c.property)));
                             }
                         }
                         let mut manual = self.is_manually_checked(&c.id);
@@ -1639,8 +2133,8 @@ impl InspectorApp {
                     }
                 });
             });
-        if let Some(text) = copy {
-            self.copy_text_with_feedback(ctx, text, "");
+        if let Some((text, label)) = copy {
+            self.copy_text_with_feedback(ctx, text, &label);
         }
     }
 
@@ -1687,7 +2181,7 @@ impl InspectorApp {
         });
 
         let mut toggle_check: Option<(String, bool)> = None;
-        let mut to_copy: Option<(String, &'static str)> = None;
+        let mut to_copy: Option<(String, String)> = None;
 
         ui.horizontal(|ui| {
             ui.heading(tf(
@@ -1697,7 +2191,7 @@ impl InspectorApp {
             ui.separator();
             if ui.button(tr("action.copy_all")).clicked() {
                 let script = commands::device_script(&incomplete, None);
-                to_copy = Some((script, ""));
+                to_copy = Some((script, tr("action.copy_all").to_string()));
             }
             ui.separator();
             ui.label(
@@ -1765,13 +2259,39 @@ impl InspectorApp {
                             }
                         });
 
+                        if let Some(detail) = extract_network_detail(c) {
+                            ui.add_space(3.0);
+                            ui.horizontal_wrapped(|ui| {
+                                render_protocol_badge(
+                                    ui,
+                                    detail.badge,
+                                    &tr(detail.badge.catalog_key()),
+                                );
+                                ui.label(egui::RichText::new(tr("detail.normalized_cidr")).weak());
+                                ui.monospace(&detail.normalized_cidr);
+                                if let Some(ref mask) = detail.subnet_mask {
+                                    ui.label(egui::RichText::new(tr("detail.subnet_mask")).weak());
+                                    ui.monospace(mask);
+                                }
+                                if let Some(ref wildcard) = detail.wildcard_mask {
+                                    ui.label(
+                                        egui::RichText::new(tr("detail.wildcard_mask")).weak(),
+                                    );
+                                    ui.monospace(wildcard);
+                                }
+                            });
+                        }
+
                         ui.add_space(4.0);
                         let cmd = commands::generate(c);
                         if cmd.supported && !cmd.gui {
                             ui.horizontal(|ui| {
                                 ui.monospace(&cmd.text);
                                 if ui.small_button(tr("action.copy_checkpoint")).clicked() {
-                                    to_copy = Some((cmd.text.clone(), ""));
+                                    to_copy = Some((
+                                        cmd.text.clone(),
+                                        format!("{} {}", c.device, c.property),
+                                    ));
                                 }
                             });
                         } else if cmd.gui {
@@ -1806,7 +2326,7 @@ impl InspectorApp {
             self.set_manual_check(&id, checked);
         }
         if let Some((text, label)) = to_copy {
-            self.copy_text_with_feedback(ctx, text, label);
+            self.copy_text_with_feedback(ctx, text, &label);
         }
     }
 
@@ -1827,7 +2347,7 @@ impl InspectorApp {
         let script = commands::device_script(&a.checkpoints, target_device);
 
         let mut select_dev: Option<Option<String>> = None;
-        let mut do_copy: Option<(String, &'static str)> = None;
+        let mut do_copy: Option<(String, String)> = None;
         let mut status_update: Option<String> = None;
 
         let active_filter = self.command_device_filter.clone();
@@ -1858,7 +2378,7 @@ impl InspectorApp {
 
             // Copy button
             if ui.button(tr("action.copy_device")).clicked() {
-                do_copy = Some((script.clone(), ""));
+                do_copy = Some((script.clone(), current_filter.clone()));
             }
 
             // Export to file button
@@ -1975,7 +2495,7 @@ impl InspectorApp {
             self.command_device_filter = dev;
         }
         if let Some((text, label)) = do_copy {
-            self.copy_text_with_feedback(ctx, text, label);
+            self.copy_text_with_feedback(ctx, text, &label);
         }
         if let Some(msg) = status_update {
             self.set_status(msg);
@@ -2058,7 +2578,7 @@ impl InspectorApp {
         });
 
         if do_copy {
-            self.copy_text_with_feedback(ctx, a.xml.clone(), "");
+            self.copy_text_with_feedback(ctx, a.xml.clone(), &tr("ui.copy_xml"));
         }
     }
 
@@ -2111,7 +2631,7 @@ impl InspectorApp {
 
         if do_copy {
             let text = diagnostics.join("\n");
-            self.copy_text_with_feedback(ctx, text, "");
+            self.copy_text_with_feedback(ctx, text, &tr("ui.copy_diagnostics"));
         }
     }
 
@@ -2274,6 +2794,8 @@ impl eframe::App for InspectorApp {
         if self.show_settings {
             self.render_settings_window(ctx);
         }
+
+        self.render_notification(ctx);
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -2853,9 +3375,197 @@ mod rendering_checks {
                     app.render_bottom_panel(ctx);
                     app.render_detail_panel(ctx);
                     app.render_central_panel(ctx);
+                    app.render_notification(ctx);
                 },
             );
             assert!(!output.shapes.is_empty(), "{tab:?}");
         }
+    }
+
+    #[test]
+    fn test_protocol_detection_and_badges() {
+        let cp_ipv4 = Checkpoint {
+            id: "route1".into(),
+            device: "Router0".into(),
+            property: "staticroute".into(),
+            expected: "172.16.128.0-17-172.18.192.1-0-1".into(),
+            path: "network/r0/staticroutes".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            detect_protocol(&cp_ipv4),
+            Some(ProtocolBadge::Ipv4StaticRoute)
+        );
+        assert_eq!(
+            ProtocolBadge::Ipv4StaticRoute.badge_text(),
+            "[IPv4 Static Route]"
+        );
+
+        let cp_ipv6 = Checkpoint {
+            id: "route2".into(),
+            device: "Router0".into(),
+            property: "ipv6staticroute".into(),
+            expected: "2001:DB8:ACAD:3::-64-2001:DB8:ACAD:2::2-0-1".into(),
+            path: "network/r0/routesv6".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            detect_protocol(&cp_ipv6),
+            Some(ProtocolBadge::Ipv6StaticRoute)
+        );
+        assert_eq!(
+            ProtocolBadge::Ipv6StaticRoute.badge_text(),
+            "[IPv6 Static Route]"
+        );
+
+        let cp_ospf = Checkpoint {
+            id: "ospf1".into(),
+            device: "Router0".into(),
+            property: "ospfnetwork".into(),
+            expected: "10.0.0.0 0.0.0.3 0".into(),
+            path: "network/r0/ospf".into(),
+            ..Default::default()
+        };
+        assert_eq!(detect_protocol(&cp_ospf), Some(ProtocolBadge::OspfNetwork));
+        assert_eq!(ProtocolBadge::OspfNetwork.badge_text(), "[OSPF Network]");
+    }
+
+    #[test]
+    fn test_extract_network_detail_fields() {
+        let cp_static = Checkpoint {
+            id: "r1".into(),
+            device: "R1".into(),
+            property: "staticroute".into(),
+            expected: "172.16.128.0-17-172.18.192.1-0-1".into(),
+            path: "network/r1/staticroute".into(),
+            ..Default::default()
+        };
+        let detail_static = extract_network_detail(&cp_static).expect("static route detail");
+        assert_eq!(detail_static.raw_value, "172.16.128.0-17-172.18.192.1-0-1");
+        assert_eq!(detail_static.normalized_cidr, "172.16.128.0/17");
+        assert_eq!(detail_static.subnet_mask.as_deref(), Some("255.255.128.0"));
+        assert_eq!(detail_static.wildcard_mask.as_deref(), Some("0.0.127.255"));
+        assert_eq!(detail_static.badge, ProtocolBadge::Ipv4StaticRoute);
+
+        let cp_ospf = Checkpoint {
+            id: "o1".into(),
+            device: "R1".into(),
+            property: "ospfnetwork".into(),
+            expected: "10.0.0.0 0.0.0.3 0".into(),
+            path: "network/r1/ospf".into(),
+            ..Default::default()
+        };
+        let detail_ospf = extract_network_detail(&cp_ospf).expect("ospf detail");
+        assert_eq!(detail_ospf.raw_value, "10.0.0.0 0.0.0.3 0");
+        assert_eq!(detail_ospf.normalized_cidr, "10.0.0.0/30");
+        assert_eq!(detail_ospf.subnet_mask.as_deref(), Some("255.255.255.252"));
+        assert_eq!(detail_ospf.wildcard_mask.as_deref(), Some("0.0.0.3"));
+        assert_eq!(detail_ospf.badge, ProtocolBadge::OspfNetwork);
+    }
+
+    #[test]
+    fn test_copy_command_immediate_notification() {
+        let mut app = InspectorApp::new(None, None);
+        let ctx = egui::Context::default();
+        app.copy_text_with_feedback(
+            &ctx,
+            "ip route 0.0.0.0 0.0.0.0 Serial0/0/0".into(),
+            "Default Route",
+        );
+
+        assert!(app.copy_notification.is_some());
+        let (msg, ts) = app.copy_notification.as_ref().unwrap();
+        assert!(msg.contains("Default Route"));
+        assert!(ts.elapsed() < Duration::from_secs(1));
+        assert!(
+            app.status_message
+                .as_ref()
+                .unwrap()
+                .contains("Default Route")
+        );
+
+        // Verify toast overlay renders without panicking
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            app.render_notification(ctx);
+        });
+        assert!(!output.shapes.is_empty());
+    }
+
+    #[test]
+    fn test_responsive_layout_rendering_with_network_details() {
+        let ctx = egui::Context::default();
+        let mut app = InspectorApp::new(None, None);
+        let analysis = Analysis {
+            checkpoints: vec![
+                Checkpoint {
+                    id: "chk_static".into(),
+                    device: "Router1".into(),
+                    device_type: "Router".into(),
+                    interface: "Serial0/0/0".into(),
+                    category: "Routing".into(),
+                    property: "staticroute".into(),
+                    expected: "172.16.128.0-17-172.18.192.1-0-1".into(),
+                    current: Some("172.16.128.0-17-172.18.192.2-0-1".into()),
+                    weight: 10.0,
+                    path: "network/r1/staticroutes".into(),
+                    status: Status::Failed,
+                    explanation: "Static route next hop mismatch".into(),
+                    evidence: vec![],
+                },
+                Checkpoint {
+                    id: "chk_ospf".into(),
+                    device: "Router2".into(),
+                    device_type: "Router".into(),
+                    interface: "GigabitEthernet0/0".into(),
+                    category: "Routing".into(),
+                    property: "ospfnetwork".into(),
+                    expected: "10.0.0.0 0.0.0.3 0".into(),
+                    current: None,
+                    weight: 10.0,
+                    path: "network/r2/ospf".into(),
+                    status: Status::Unverified,
+                    explanation: "OSPF network statement not verified".into(),
+                    evidence: vec![],
+                },
+            ],
+            ..Default::default()
+        };
+        app.analysis = Some(analysis);
+
+        // Test narrow responsive width (250px)
+        app.expanded_checkpoint_ids
+            .insert("chk_static".into(), true);
+        let narrow_output = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800., 600.),
+                )),
+                ..Default::default()
+            },
+            |ctx| {
+                app.render_detail_panel(ctx);
+                app.render_notification(ctx);
+            },
+        );
+        assert!(!narrow_output.shapes.is_empty());
+
+        // Test wide responsive width (500px)
+        app.expanded_checkpoint_ids.clear();
+        app.expanded_checkpoint_ids.insert("chk_ospf".into(), true);
+        let wide_output = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1600., 1000.),
+                )),
+                ..Default::default()
+            },
+            |ctx| {
+                app.render_detail_panel(ctx);
+                app.render_notification(ctx);
+            },
+        );
+        assert!(!wide_output.shapes.is_empty());
     }
 }

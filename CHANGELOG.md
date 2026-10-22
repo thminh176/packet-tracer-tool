@@ -1,6 +1,15 @@
 # Changelog
 
-## 0.1.0 � Initial release
+## 0.1.1 — Network & Routing Fixes
+
+- **IPv4 static route hyphenated encoding fix**: Parse and normalize Packet Tracer's internal hyphenated static route representation (`destination-prefix-nexthop_or_interface-unknown-distance`, such as `172.16.128.0-17-172.18.192.1-0-1` and `0.0.0.0-0-Serial0/1/0-0-1`). Correctly generates Cisco IOS `ip route` configuration with subnet masks, next-hop IP or exit interfaces, and administrative distance.
+- **OSPF wildcard and area handling**: Parse and normalize OSPF network statements across multiple token encodings, invert dotted subnet masks to wildcard masks, handle area notation (normalizing `0.0.0.0` to `0`), and generate structured `router ospf <pid>` context and `network <net> <wildcard> area <area>` commands.
+- **CIDR prefix normalization**: Introduce `NormalizedNetwork` engine to canonicalize CIDR prefix (`/prefix` and `-prefix`), dotted subnet mask, and wildcard mask inputs into canonical network addresses, clamping non-zero host bits with confidence levels and human-readable diagnostic explanations.
+- **Improved Auto Check diagnostics**: Enhance assessment verification against device running-config with multi-line matching for static routes and OSPF networks. Produce specific diagnostic messages when configurations are absent (e.g. "No IPv4 static routes configured on device") or when assessment checkpoints lack required parameters.
+- **IPv6 static route support**: Parse hyphenated IPv6 static route strings (`prefix-prefixlen-nexthop_or_interface-unknown-distance` and default routes `::-0-...`) and generate corresponding `ipv6 route` commands.
+- **Comprehensive network test suite**: Added `tests/network_values.rs` with 12 automated unit and integration tests covering CIDR equivalence, wildcard calculations, hyphenated static routes, default routes, exit interfaces, floating distance, and OSPF statements.
+
+## 0.1.0 — Initial release
 
 - Offline native Rust Windows inspector for supported modern PKA/PKT containers and decoded XML.
 - Recursive assessment candidates, device/interface grouping, evidence and Passed/Failed/Unverified states.

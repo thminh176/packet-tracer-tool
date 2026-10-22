@@ -6,19 +6,23 @@
 
 Independent project, **not affiliated with or endorsed by Cisco**. Cisco and Packet Tracer are trademarks of their respective owner. This repository contains no Cisco binaries, logos, courseware, private activities or answer keys.
 
-## What v0.1.0 does
+## What v0.1.1 does
 
 - Open supported modern PKA/PKT containers read-only; inspect decoded XML.
 - Recursively display selected candidate checkpoints by device/interface with requirements, weight and evidence.
 - Distinguish **Passed**, **Failed** and **Unverified**; manual review stays separate.
 - Generate supported explicit Cisco IOS commands or endpoint GUI instructions. Device scripts deduplicate IP/mask commands and group configuration contexts.
+- Parse, normalize, and compare IPv4/IPv6 static routes, default routes, exit interfaces, floating distance, and hyphenated Packet Tracer route strings.
+- Parse and normalize OSPF network statements, automatically deriving wildcard masks, normalizing areas (e.g. area 0), and generating `router ospf` configuration.
+- Canonicalize CIDR prefixes (`/prefix` and `-prefix`), subnet masks, and wildcard masks with confidence reporting and diagnostic explanations.
+- Provide enhanced Auto Check diagnostics against device `running-config`, reporting clear explanations when routes or OSPF statements are missing.
 - Copy individual/device commands; export CSV, Markdown and CLI scripts with source-preserving writes.
 - Switch English/Vietnamese, remember preferences, extend translations using local JSON.
 - Parse in the background; virtualize large checkpoint/XML views.
 
 ## Install and use
 
-Download `packet-tracer-tool-v0.1.0-windows-x64.zip` and its `.sha256` from [Releases](https://github.com/thminh176/packet-tracer-tool/releases), verify the checksum, extract and run `pka-lab-inspector.exe`. The EXE is unsigned. See [installation](docs/INSTALLATION.md).
+Download `packet-tracer-tool-v0.1.1-windows-x64.zip` and its `.sha256` from [Releases](https://github.com/thminh176/packet-tracer-tool/releases), verify the checksum, extract and run `pka-lab-inspector.exe`. The EXE is unsigned. See [installation](docs/INSTALLATION.md).
 
 Open an activity, review diagnostics, then optionally load a separate saved network to compare progress. Select a checkpoint for evidence and command support. **Paste IOS commands into Packet Tracer → target device → CLI, never PowerShell or a host shell.** Use GUI instructions for PC/server settings. Unsupported requirements are omitted from executable commands; review them separately.
 
@@ -26,7 +30,7 @@ The application never modifies the source PKA/PKT and does not execute generated
 
 ## Limits you should know
 
-This is a conservative inspector, **not Cisco's native grader**. Selection metadata is inferred from observed schema. Unlabelled embedded network snapshots remain Unverified; current/expected data is used only when reliable. Unsupported checks never count as failures or fabricated passes. Full routing/VLAN/ACL/NAT/DHCP validation, custom/script graders, activity password handling, grade editing, live integration and universal PKA compatibility are absent.
+This is a conservative inspector, **not Cisco's native grader**. Selection metadata is inferred from observed schema. Unlabelled embedded network snapshots remain Unverified; current/expected data is used only when reliable. Unsupported checks never count as failures or fabricated passes. Static routes and OSPF network statements are evaluated against running-config; however, dynamic routing convergence, metric calculation, VLAN/trunking logic, ACL, NAT, DHCP, custom/script graders, activity password handling, grade editing, live integration and universal PKA compatibility remain outside offline inspection scope.
 
 The known 32-checkpoint / 100-point / 7-device reference and a real 126-checkpoint activity have not been certified. The original synthetic 126-checkpoint fixture tests structure and supported comparisons only. See [test evidence](docs/TEST_RESULTS.md) and [compatibility](docs/COMPATIBILITY.md).
 
@@ -56,6 +60,6 @@ Other independent tools include PKA Decipher and cisco-pka-to-xml. Their work is
 
 ## Roadmap
 
-After v0.1.0: parser/validator coverage with permitted fixtures, better diagnostics, topology/subnet tools, and investigation of an **optional read-only** pktctl adapter. Live Windows support is unverified and not required for offline use; future live writes require explicit user confirmation. Major features stay on separate branches.
+After v0.1.1: expanded parser/validator coverage with permitted fixtures, broader routing protocol validation (EIGRP/BGP), topology/subnet visualization tools, and investigation of an **optional read-only** pktctl adapter. Live Windows support is unverified and not required for offline use; future live writes require explicit user confirmation. Major features stay on separate branches.
 
 Windows runtime: if `VCRUNTIME140.dll` is missing, install Microsoft's official Visual C++ x64 Redistributable (see installation guide). It is not bundled. The application works offline after its OS/runtime prerequisites are installed.

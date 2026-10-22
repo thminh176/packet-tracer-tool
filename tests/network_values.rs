@@ -124,13 +124,19 @@ fn test_static_route_default_route() {
     let r1 = ParsedStaticRoute::parse("0.0.0.0-0-Serial0/1/1-0-1").unwrap();
     assert!(r1.is_default);
     assert_eq!(r1.exit_interface, Some("Serial0/1/1".into()));
-    assert_eq!(r1.to_cisco_command().unwrap(), "ip route 0.0.0.0 0.0.0.0 Serial0/1/1");
+    assert_eq!(
+        r1.to_cisco_command().unwrap(),
+        "ip route 0.0.0.0 0.0.0.0 Serial0/1/1"
+    );
 
     // Default route via next-hop IP
     let r2 = ParsedStaticRoute::parse("0.0.0.0 0.0.0.0 172.18.192.2").unwrap();
     assert!(r2.is_default);
     assert_eq!(r2.next_hop, Some(Ipv4Addr::new(172, 18, 192, 2)));
-    assert_eq!(r2.to_cisco_command().unwrap(), "ip route 0.0.0.0 0.0.0.0 172.18.192.2");
+    assert_eq!(
+        r2.to_cisco_command().unwrap(),
+        "ip route 0.0.0.0 0.0.0.0 172.18.192.2"
+    );
 }
 
 #[test]
@@ -187,10 +193,7 @@ fn test_ospf_network_parsing_and_missing_fields() {
     let o3 = ParsedOspfNetwork::parse("100.0.0.0-8").unwrap();
     assert_eq!(o3.wildcard_mask, Ipv4Addr::new(0, 255, 255, 255));
     assert!(!o3.is_complete);
-    assert_eq!(
-        o3.missing_fields,
-        vec!["OSPF process ID", "OSPF area ID"]
-    );
+    assert_eq!(o3.missing_fields, vec!["OSPF process ID", "OSPF area ID"]);
 }
 
 #[test]
@@ -216,7 +219,10 @@ fn test_command_generation_for_normalized_checkpoints() {
     };
     let cmd1 = pka_lab_inspector::commands::generate(&c1);
     assert!(cmd1.supported);
-    assert!(cmd1.text.contains("ip route 172.16.128.0 255.255.128.0 172.18.192.1"));
+    assert!(
+        cmd1.text
+            .contains("ip route 172.16.128.0 255.255.128.0 172.18.192.1")
+    );
 
     // OSPF network with sibling evidence
     let c2 = Checkpoint {
