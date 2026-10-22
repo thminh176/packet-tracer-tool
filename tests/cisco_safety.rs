@@ -110,3 +110,64 @@ fn route_distance_and_ospf_process_are_semantic() {
         Status::Passed
     );
 }
+#[test]
+fn typed_switch_validation_is_integrated_without_claiming_operational_state() {
+    let mut activity = pka_lab_inspector::model::Analysis {
+        checkpoints: vec![Checkpoint {
+            device: "R1".into(),
+            interface: "Gi0/1".into(),
+            device_type: "Switch".into(),
+            property: "Access VLAN".into(),
+            expected: "20".into(),
+            weight: 3.,
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let d = device(
+        "R1",
+        "<LINE>interface GigabitEthernet0/1</LINE><LINE> switchport mode access</LINE><LINE> switchport access vlan 20</LINE><LINE>!</LINE>",
+    );
+    let progress = parse(&format!(
+        "<PACKETTRACER5><NETWORK><DEVICES>{d}</DEVICES></NETWORK></PACKETTRACER5>"
+    ))
+    .unwrap();
+    compare(&mut activity, &progress);
+    assert_eq!(activity.checkpoints[0].status, Status::Passed);
+    assert_eq!(activity.checkpoints[0].current.as_deref(), Some("20"));
+    assert_eq!(activity.summary().verified_score, 3.);
+    let d = device(
+        "R1",
+        "<LINE>interface GigabitEthernet0/1</LINE><LINE> switchport access vlan 20</LINE><LINE>!</LINE>",
+    );
+    let progress = parse(&format!(
+        "<PACKETTRACER5><NETWORK><DEVICES>{d}</DEVICES></NETWORK></PACKETTRACER5>"
+    ))
+    .unwrap();
+    compare(&mut activity, &progress);
+    assert_eq!(activity.checkpoints[0].status, Status::Unverified);
+    assert_eq!(activity.summary().verified_score, 0.);
+}
+#[test]
+fn static_ecmp_and_floating_routes_coexist_in_scripts() {
+    let a = check("Static Route", "10.0.0.0 255.0.0.0 192.0.2.1");
+    let b = check("Static Route", "10.0.0.0 255.0.0.0 192.0.2.2");
+    let d = check("Static Route", "10.0.0.0 255.0.0.0 192.0.2.1 5");
+    let script = commands::device_script(&[a, b, d], None);
+    assert_eq!(script.matches("ip route ").count(), 3, "{script}");
+    assert!(!script.contains("conflicting"));
+}
+#[test]
+fn mixed_profiles_and_conflicting_ospf_metadata_are_not_repairs() {
+    let mut a = check("Hostname", "RouterLab");
+    let mut b = check("Hostname", "SwitchLab");
+    b.device_type = "Switch".into();
+    assert!(!commands::device_script(&[a.clone(), b], None).contains("hostname "));
+    a.property = "OSPF Network".into();
+    a.expected = "10.0.0.0 0.255.255.255 0".into();
+    a.evidence = vec![
+        "commands:ospf-process=10".into(),
+        "commands:ospf-process=20".into(),
+    ];
+    assert!(!commands::generate(&a).supported);
+}

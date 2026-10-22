@@ -50,6 +50,7 @@ pub fn parse(input: &str) -> ParsedConfig {
         return p;
     }
     let mut mode = ConfigMode::Global;
+    let mut seen_modes = std::collections::HashSet::new();
     for (index, line) in input.lines().enumerate() {
         if index >= 50_000 || line.len() > 4096 {
             p.reliable = false;
@@ -108,6 +109,11 @@ pub fn parse(input: &str) -> ParsedConfig {
             t.strip_prefix("line ").map(|s| ConfigMode::Line(s.into()))
         };
         if let Some(next) = next {
+            if !seen_modes.insert(next.clone()) {
+                p.reliable = false;
+                p.diagnostics
+                    .push("Duplicate configuration mode identity".into());
+            }
             mode = next;
             continue;
         }

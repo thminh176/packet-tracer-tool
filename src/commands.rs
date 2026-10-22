@@ -332,6 +332,37 @@ fn plan(c: &Checkpoint) -> Result<Plan, &'static str> {
         );
     }
     let p = key(&c.property);
+    let profile = crate::cisco::mapping::profile(c);
+    use crate::cisco::DeviceProfile;
+    if matches!(
+        profile,
+        DeviceProfile::GenericRouter
+            | DeviceProfile::Router1941
+            | DeviceProfile::Router2911
+            | DeviceProfile::Isr4321
+    ) && matches!(p.as_str(), "defaultgateway" | "gateway")
+        && !c
+            .evidence
+            .iter()
+            .any(|s| s == "commands:parameter:ip_routing=disabled")
+    {
+        return Err(
+            "A router default gateway requires explicit disabled IP routing; use an explicitly specified default static route for routed traffic",
+        );
+    }
+    if matches!(
+        profile,
+        DeviceProfile::GenericSwitch | DeviceProfile::Catalyst2960 | DeviceProfile::Catalyst3560
+    ) && (p.starts_with("nat")
+        || p.starts_with("dhcp")
+        || p.starts_with("rip")
+        || p.starts_with("eigrp")
+        || matches!(p.as_str(), "standardacl" | "extendedacl" | "aclattachment"))
+    {
+        return Err(
+            "This router command family requires a separately implemented and evidenced switch-specific workflow",
+        );
+    }
     if p == "portsecurity" && enabled(value) != Some(true) {
         return Err(
             "Only explicit port-security enablement is supported; disablement is not an automatic repair",

@@ -1175,6 +1175,20 @@ pub fn compare(activity: &mut Analysis, progress: &Analysis) {
         .iter()
         .filter(|(_, r)| root.tag == "PACKETTRACER5" || r == "current")
         .collect();
+    let mut configs = Vec::new();
+    descendants(&root, "RUNNINGCONFIG", &mut configs);
+    fn text_bytes(n: &Node) -> usize {
+        n.text
+            .len()
+            .saturating_add(n.children.iter().map(text_bytes).sum::<usize>())
+    }
+    let config_bytes = configs.iter().map(|n| text_bytes(n)).sum::<usize>();
+    if activity.checkpoints.len().saturating_mul(config_bytes) > 512 * 1024 * 1024 {
+        activity.diagnostics.push(
+            "Configuration verification byte budget exceeded; results remain Unverified".into(),
+        );
+        return;
+    }
     for check in &mut activity.checkpoints {
         if current.len() != 1
             || check.device.is_empty()
@@ -1190,6 +1204,20 @@ pub fn compare(activity: &mut Analysis, progress: &Analysis) {
         }
         let Some(tag) = property_tag(&check.property, &check.path) else {
             check.explanation = "Unsupported assessment check type; not evaluated".into();
+            if let Some(lines) = uniquely_owned_config(current[0].0, &check.device) {
+                let text = lines.join("\n");
+                let observation = crate::cisco::validator::DeviceObservation {
+                    device: &check.device,
+                    unique_current_snapshot: true,
+                    unique_device: true,
+                    configuration: &text,
+                };
+                let result = crate::cisco::validator::validate(check, &observation);
+                check.status = result.status;
+                check.current = result.current;
+                check.explanation = result.explanation;
+                check.evidence.extend(result.evidence);
+            }
             continue;
         };
         if matches!(

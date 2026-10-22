@@ -12,6 +12,9 @@ fn checkpoint(property: &str, expected: &str) -> Checkpoint {
         expected: expected.into(),
         ..Default::default()
     };
+    if property == "Default Gateway" {
+        c.device_type = "Switch".into();
+    }
     if matches!(
         property,
         "VLAN"

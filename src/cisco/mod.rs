@@ -6,6 +6,7 @@ pub mod mapping;
 pub mod parser;
 pub mod router;
 pub mod switch;
+pub mod validator;
 pub use device_profile::{Capability, DeviceProfile, SupportState};
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ConfigMode {
@@ -130,6 +131,25 @@ pub fn registry() -> Vec<CommandSpec> {
     let mut v = basic::specs();
     v.extend(switch::specs());
     v.extend(router::specs());
+    for s in &mut v {
+        s.semantic_validation = matches!(
+            s.id,
+            "basic.hostname"
+                | "router.interface.ipv4"
+                | "router.interface.ipv6"
+                | "router.interface.link_local"
+                | "router.interface.shutdown"
+                | "router.interface.description"
+                | "router.route.ipv4"
+                | "router.route.ipv6"
+                | "router.ospf.network"
+                | "switch.port_mode"
+                | "switch.access_vlan"
+                | "switch.trunk_native"
+                | "switch.trunk_allowed"
+                | "switch.stp_mode"
+        );
+    }
     v
 }
 pub fn identifier(s: &str) -> bool {
