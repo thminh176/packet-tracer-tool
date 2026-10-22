@@ -455,6 +455,18 @@ pub fn parse(xml: &str) -> Result<Analysis> {
             if types.len() == 1 {
                 checkpoint.device_type = types[0].into();
             }
+            let models: std::collections::BTreeSet<_> = matching
+                .iter()
+                .filter_map(|d| d.unique_child("ENGINE").unwrap_or(d).unique_value("MODEL"))
+                .filter(|s| !s.is_empty())
+                .collect();
+            if models.len() == 1
+                && let Some(model) = models.first()
+            {
+                checkpoint
+                    .evidence
+                    .push(format!("assessment:device-model={model}"));
+            }
             let mut ports = Vec::new();
             for d in matching {
                 descendants(d, "PORT", &mut ports);
@@ -514,6 +526,10 @@ pub fn parse(xml: &str) -> Result<Analysis> {
         "parse (ms)".into(),
         started.elapsed().as_secs_f64() * 1000.0,
     ));
+    for check in &mut result.checkpoints {
+        check.command_classification = crate::cisco::mapping::classify(check);
+    }
+    result.command_coverage = crate::cisco::mapping::coverage(&result.checkpoints);
     Ok(result)
 }
 
@@ -553,6 +569,13 @@ fn sentinel(s: &str) -> bool {
     ) || s.contains("${")
 }
 fn property_tag(property: &str, path: &str) -> Option<&'static str> {
+    if crate::commands::ipv6_address_context(path) {
+        match property.trim().to_ascii_lowercase().as_str() {
+            "ip address" => return Some("IPV6_ADDRESSES"),
+            "prefix length" => return Some("IPV6_PREFIX"),
+            _ => (),
+        }
+    }
     if crate::commands::is_static_route_property(property, path) {
         return Some("STATIC_ROUTE");
     }
@@ -571,7 +594,7 @@ fn property_tag(property: &str, path: &str) -> Option<&'static str> {
         "ipv6 address" | "ipv6 addresses" => Some("IPV6_ADDRESSES"),
         "ipv6 prefix length" => Some("IPV6_PREFIX"),
         "link local" | "link local address" | "ipv6 link local address" => Some("IPV6_LINK_LOCAL"),
-        "ipv6 default gateway" => Some("IPV6_PORT_GATEWAY"),
+        "ipv6 default gateway" | "default gateway ipv6" => Some("IPV6_PORT_GATEWAY"),
         "port status" => Some("POWER"),
         "ipv6 enable" => Some("IPV6_ENABLED"),
         "ipv6 auto config" => Some("IPV6_ADDRESS_AUTOCONFIG"),
@@ -648,6 +671,9 @@ fn semantic_equal(tag: &str, expected: &str, actual: &str) -> Option<bool> {
         "STATIC_ROUTE" => {
             let exp_route = crate::network_values::ParsedStaticRoute::parse(expected).ok()?;
             let act_route = crate::network_values::ParsedStaticRoute::parse(actual).ok()?;
+            if !exp_route.is_complete || !act_route.is_complete {
+                return None;
+            }
             if exp_route.destination.network != act_route.destination.network
                 || exp_route.destination.prefix != act_route.destination.prefix
             {
@@ -664,16 +690,17 @@ fn semantic_equal(tag: &str, expected: &str, actual: &str) -> Option<bool> {
                     return Some(false);
                 }
             }
-            if let Some(exp_dist) = exp_route.distance {
-                if exp_dist > 1 && act_route.distance != Some(exp_dist) {
-                    return Some(false);
-                }
+            if exp_route.distance.unwrap_or(1) != act_route.distance.unwrap_or(1) {
+                return Some(false);
             }
             Some(true)
         }
         "IPV6_STATIC_ROUTE" => {
             let exp = crate::network_values::ParsedIpv6StaticRoute::parse(expected)?;
             let act = crate::network_values::ParsedIpv6StaticRoute::parse(actual)?;
+            if !exp.is_complete || !act.is_complete {
+                return None;
+            }
             if exp.destination != act.destination || exp.prefix != act.prefix {
                 return Some(false);
             }
@@ -688,22 +715,32 @@ fn semantic_equal(tag: &str, expected: &str, actual: &str) -> Option<bool> {
                     return Some(false);
                 }
             }
-            if let Some(exp_dist) = exp.distance {
-                if exp_dist > 1 && act.distance != Some(exp_dist) {
-                    return Some(false);
-                }
+            if exp.distance.unwrap_or(1) != act.distance.unwrap_or(1) {
+                return Some(false);
             }
             Some(true)
         }
         "OSPF_NETWORK" => {
             let exp = crate::network_values::ParsedOspfNetwork::parse(expected).ok()?;
             let act = crate::network_values::ParsedOspfNetwork::parse(actual).ok()?;
+            if !exp.is_complete
+                || !act.is_complete
+                || exp.process_id.is_none()
+                || act.process_id.is_none()
+            {
+                return None;
+            }
             if exp.network != act.network || exp.wildcard_mask != act.wildcard_mask {
                 return Some(false);
             }
             if let (Some(ea), Some(aa)) = (&exp.area, &act.area) {
-                let norm_ea = if ea == "0.0.0.0" { "0" } else { ea.as_str() };
-                let norm_aa = if aa == "0.0.0.0" { "0" } else { aa.as_str() };
+                let area_id = |s: &str| {
+                    s.parse::<u32>()
+                        .ok()
+                        .or_else(|| s.parse::<std::net::Ipv4Addr>().ok().map(u32::from))
+                };
+                let norm_ea = area_id(ea)?;
+                let norm_aa = area_id(aa)?;
                 if norm_ea != norm_aa {
                     return Some(false);
                 }
@@ -722,9 +759,12 @@ fn semantic_equal(tag: &str, expected: &str, actual: &str) -> Option<bool> {
     }
 }
 fn attach_command_context(checks: &mut [Checkpoint]) {
+    let mut ospf_processes = HashMap::<(String, String, String), Vec<String>>::new();
+    let mut ospf_areas = HashMap::<(String, String, String), Vec<String>>::new();
     let mut masks = HashMap::<(String, String, String), Vec<String>>::new();
     let mut addresses = HashMap::<(String, String, String), Vec<String>>::new();
     let mut prefixes = HashMap::<(String, String, String), Vec<u8>>::new();
+    let mut ipv6_addresses = HashMap::<(String, String, String), Vec<String>>::new();
     let context = |c: &Checkpoint| {
         (
             c.device.clone(),
@@ -737,10 +777,58 @@ fn attach_command_context(checks: &mut [Checkpoint]) {
         )
     };
     for c in checks.iter() {
+        if property_tag(&c.property, &c.path) == Some("IPV6_ADDRESSES")
+            && !c.device.is_empty()
+            && !c.interface.is_empty()
+            && c.evidence
+                .iter()
+                .all(|e| e == "assessment:compare" || e.starts_with("assessment:device-model="))
+            && ipv6(&c.expected).is_some()
+        {
+            ipv6_addresses
+                .entry(context(c))
+                .or_default()
+                .push(c.expected.clone());
+        }
+        if c.path.to_ascii_lowercase().contains("ospf")
+            && !c.device.is_empty()
+            && !c.evidence.iter().any(|e| {
+                matches!(
+                    e.as_str(),
+                    "assessment:unsupported" | "assessment:ambiguous" | "assessment:inventory"
+                )
+            })
+        {
+            let key: String = c
+                .property
+                .chars()
+                .filter(|ch| ch.is_ascii_alphanumeric())
+                .flat_map(char::to_lowercase)
+                .collect();
+            if matches!(key.as_str(), "processid" | "ospfprocessid")
+                && c.expected.parse::<u16>().is_ok_and(|n| n > 0)
+            {
+                ospf_processes
+                    .entry(context(c))
+                    .or_default()
+                    .push(c.expected.clone());
+            }
+            if matches!(key.as_str(), "areaid" | "ospfareaid")
+                && (c.expected.parse::<u32>().is_ok()
+                    || c.expected.parse::<std::net::Ipv4Addr>().is_ok())
+            {
+                ospf_areas
+                    .entry(context(c))
+                    .or_default()
+                    .push(c.expected.clone());
+            }
+        }
         if property_tag(&c.property, &c.path) == Some("IP")
             && !c.device.is_empty()
             && !c.interface.is_empty()
-            && c.evidence.iter().all(|e| e == "assessment:compare")
+            && c.evidence
+                .iter()
+                .all(|e| e == "assessment:compare" || e.starts_with("assessment:device-model="))
             && c.expected.parse::<std::net::Ipv4Addr>().is_ok()
             && !sentinel(&c.expected)
         {
@@ -752,7 +840,9 @@ fn attach_command_context(checks: &mut [Checkpoint]) {
         if property_tag(&c.property, &c.path) == Some("SUBNET")
             && !c.device.is_empty()
             && !c.interface.is_empty()
-            && c.evidence.iter().all(|e| e == "assessment:compare")
+            && c.evidence
+                .iter()
+                .all(|e| e == "assessment:compare" || e.starts_with("assessment:device-model="))
             && subnet_mask(&c.expected)
             && !sentinel(&c.expected)
         {
@@ -764,7 +854,9 @@ fn attach_command_context(checks: &mut [Checkpoint]) {
         if property_tag(&c.property, &c.path) == Some("IPV6_PREFIX")
             && !c.device.is_empty()
             && !c.interface.is_empty()
-            && c.evidence.iter().all(|e| e == "assessment:compare")
+            && c.evidence
+                .iter()
+                .all(|e| e == "assessment:compare" || e.starts_with("assessment:device-model="))
             && let Ok(prefix) = c.expected.parse::<u8>()
             && prefix <= 128
         {
@@ -772,8 +864,36 @@ fn attach_command_context(checks: &mut [Checkpoint]) {
         }
     }
     for c in checks {
+        if property_tag(&c.property, &c.path) == Some("IPV6_PREFIX")
+            && c.evidence
+                .iter()
+                .all(|e| e == "assessment:compare" || e.starts_with("assessment:device-model="))
+            && let Some(values) = ipv6_addresses.get(&context(c)).filter(|v| v.len() == 1)
+            && let Some(prefixes) = prefixes.get(&context(c)).filter(|v| v.len() == 1)
+            && c.expected.parse::<u8>().ok() == Some(prefixes[0])
+        {
+            if let Some((address, inline_prefix)) = ipv6(&values[0]) {
+                if inline_prefix.is_some_and(|prefix| prefix != prefixes[0]) {
+                    c.evidence
+                        .push("commands:context-conflict=ipv6-prefix".into());
+                } else {
+                    c.evidence.push(format!("commands:ipv6-address={address}"));
+                }
+            }
+        }
+        if crate::commands::is_ospf_network_property(&c.property, &c.path) {
+            if let Some(values) = ospf_processes.get(&context(c)).filter(|v| v.len() == 1) {
+                c.evidence
+                    .push(format!("commands:ospf-process={}", values[0]));
+            }
+            if let Some(values) = ospf_areas.get(&context(c)).filter(|v| v.len() == 1) {
+                c.evidence.push(format!("commands:ospf-area={}", values[0]));
+            }
+        }
         if property_tag(&c.property, &c.path) == Some("SUBNET")
-            && c.evidence.iter().all(|e| e == "assessment:compare")
+            && c.evidence
+                .iter()
+                .all(|e| e == "assessment:compare" || e.starts_with("assessment:device-model="))
             && subnet_mask(&c.expected)
             && let Some(values) = addresses.get(&context(c)).filter(|v| v.len() == 1)
         {
@@ -781,7 +901,9 @@ fn attach_command_context(checks: &mut [Checkpoint]) {
                 .push(format!("commands:ipv4-address={}", values[0]));
         }
         if property_tag(&c.property, &c.path) == Some("IP")
-            && c.evidence.iter().all(|e| e == "assessment:compare")
+            && c.evidence
+                .iter()
+                .all(|e| e == "assessment:compare" || e.starts_with("assessment:device-model="))
             && c.expected.parse::<std::net::Ipv4Addr>().is_ok()
             && !sentinel(&c.expected)
             && let Some(values) = masks.get(&context(c)).filter(|v| v.len() == 1)
@@ -791,7 +913,9 @@ fn attach_command_context(checks: &mut [Checkpoint]) {
         if property_tag(&c.property, &c.path) == Some("IPV6_ADDRESSES")
             && !c.device.is_empty()
             && !c.interface.is_empty()
-            && c.evidence.iter().all(|e| e == "assessment:compare")
+            && c.evidence
+                .iter()
+                .all(|e| e == "assessment:compare" || e.starts_with("assessment:device-model="))
             && let Some((_, explicit_prefix)) = ipv6(&c.expected)
         {
             if let Some(prefix) = explicit_prefix
@@ -799,6 +923,8 @@ fn attach_command_context(checks: &mut [Checkpoint]) {
                     .get(&context(c))
                     .is_some_and(|values| values.len() != 1 || values[0] != prefix)
             {
+                c.evidence
+                    .push("commands:context-conflict=ipv6-prefix".into());
                 continue;
             }
             let prefix = explicit_prefix.or_else(|| {
@@ -825,6 +951,12 @@ fn ios_observations(device: &Node, interface: &str, tag: &str) -> Vec<String> {
         .filter(|n| n.tag == "LINE")
         .map(|n| n.text.as_str())
         .collect();
+    if lines.len() > 50_000
+        || lines.iter().any(|l| l.len() > 4096)
+        || lines.iter().map(|l| l.len()).sum::<usize>() > 4 * 1024 * 1024
+    {
+        return Vec::new();
+    }
     if lines.iter().any(|line| {
         [
             "banner ",
@@ -837,58 +969,47 @@ fn ios_observations(device: &Node, interface: &str, tag: &str) -> Vec<String> {
     }) {
         return Vec::new();
     }
-    if tag == "HOSTNAME" && interface.is_empty() {
-        return lines
-            .iter()
-            .filter_map(|line| line.trim().strip_prefix("hostname ").map(str::trim))
-            .filter(|name| !name.is_empty() && !name.contains(char::is_whitespace))
-            .map(str::to_owned)
-            .collect();
-    }
-    if tag == "STATIC_ROUTE" && interface.is_empty() {
-        return lines
-            .iter()
-            .filter_map(|line| line.trim().strip_prefix("ip route ").map(str::trim))
-            .filter(|r| !r.is_empty())
-            .map(str::to_owned)
-            .collect();
-    }
-    if tag == "IPV6_STATIC_ROUTE" && interface.is_empty() {
-        return lines
-            .iter()
-            .filter_map(|line| line.trim().strip_prefix("ipv6 route ").map(str::trim))
-            .filter(|r| !r.is_empty())
-            .map(str::to_owned)
-            .collect();
-    }
-    if tag == "OSPF_NETWORK" && interface.is_empty() {
-        let mut active_pid: Option<u32> = None;
-        let mut statements = Vec::new();
-        for line in &lines {
-            let trimmed = line.trim();
-            if let Some(rest) = trimmed.strip_prefix("router ospf ") {
-                active_pid = rest
-                    .trim()
-                    .parse::<u32>()
-                    .ok()
-                    .filter(|&p| p > 0 && p < 65535);
-                continue;
-            }
-            if matches!(trimmed, "!" | "exit" | "end")
-                || (!line.starts_with(char::is_whitespace) && !trimmed.is_empty())
-            {
-                active_pid = None;
-            }
-            if let Some(pid) = active_pid {
-                if let Some(rest) = trimmed.strip_prefix("network ") {
-                    let words: Vec<&str> = rest.split_whitespace().collect();
-                    if words.len() == 4 && words[2] == "area" {
-                        statements.push(format!("{pid} {} {} {}", words[0], words[1], words[3]));
+    if interface.is_empty() {
+        let parsed = crate::cisco::parser::parse(&lines.join("\n"));
+        if !parsed.reliable {
+            return Vec::new();
+        }
+        use crate::cisco::ConfigMode;
+        let mut values = Vec::new();
+        for entry in &parsed.entries {
+            let value = match (&entry.mode, tag) {
+                (ConfigMode::Global, "HOSTNAME") => {
+                    entry.text.strip_prefix("hostname ").map(str::to_owned)
+                }
+                (ConfigMode::Global, "STATIC_ROUTE") => {
+                    entry.text.strip_prefix("ip route ").map(str::to_owned)
+                }
+                (ConfigMode::Global, "IPV6_STATIC_ROUTE") => {
+                    entry.text.strip_prefix("ipv6 route ").map(str::to_owned)
+                }
+                (ConfigMode::Router(protocol), "OSPF_NETWORK") => {
+                    if let Some(pid) = protocol
+                        .strip_prefix("ospf ")
+                        .and_then(|v| v.parse::<u16>().ok())
+                        .filter(|v| *v > 0)
+                    {
+                        let words: Vec<_> = entry.text.split_whitespace().collect();
+                        if words.len() == 5 && words[0] == "network" && words[3] == "area" {
+                            Some(format!("{pid} {} {} {}", words[1], words[2], words[4]))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
                     }
                 }
+                _ => None,
+            };
+            if let Some(value) = value {
+                values.push(value);
             }
         }
-        return statements;
+        return values;
     }
     if interface.is_empty() {
         return Vec::new();
@@ -950,16 +1071,49 @@ fn ios_observations(device: &Node, interface: &str, tag: &str) -> Vec<String> {
     }
     if sections == 1 { values } else { Vec::new() }
 }
-fn observations(node: &Node, device: &str, interface: &str, tag: &str) -> Vec<String> {
+fn unique_device<'a>(node: &'a Node, name: &str) -> Option<&'a Node> {
     let mut devices = Vec::new();
     descendants(node, "DEVICE", &mut devices);
-    let matching: Vec<_> = devices
-        .into_iter()
-        .filter(|d| {
-            let engine = d.unique_child("ENGINE").unwrap_or(d);
-            engine.unique_value("NAME") == Some(device)
-        })
+    let mut matching = devices.into_iter().filter(|d| {
+        let engines: Vec<_> = d.children.iter().filter(|n| n.tag == "ENGINE").collect();
+        let engine = match engines.as_slice() {
+            [] => *d,
+            [engine] => *engine,
+            _ => return false,
+        };
+        engine.unique_value("NAME") == Some(name)
+    });
+    let first = matching.next()?;
+    if matching.next().is_some() {
+        None
+    } else {
+        Some(first)
+    }
+}
+fn uniquely_owned_config<'a>(node: &'a Node, name: &str) -> Option<Vec<&'a str>> {
+    let device = unique_device(node, name)?;
+    let mut configs = Vec::new();
+    descendants(device, "RUNNINGCONFIG", &mut configs);
+    if configs.len() != 1 {
+        return None;
+    }
+    let lines: Vec<_> = configs[0]
+        .children
+        .iter()
+        .filter(|n| n.tag == "LINE")
+        .map(|n| n.text.as_str())
         .collect();
+    if lines.is_empty()
+        || configs[0].children.iter().any(|n| n.tag != "LINE")
+        || !configs[0].text.trim().is_empty()
+    {
+        None
+    } else {
+        Some(lines)
+    }
+}
+fn observations(node: &Node, device: &str, interface: &str, tag: &str) -> Vec<String> {
+    let matching: Vec<_> = unique_device(node, device).into_iter().collect();
     if matching.len() != 1 {
         return Vec::new();
     }
@@ -1037,6 +1191,7 @@ fn consistent_observations(values: Vec<String>, ios: Vec<String>, tag: &str) -> 
 /// Validate a small supported semantic subset against an explicitly identified
 /// current network or standalone PKT. Missing/ambiguous/unsupported stays unknown.
 pub fn compare(activity: &mut Analysis, progress: &Analysis) {
+    activity.command_coverage.validation_verified = 0;
     let validation_started = Instant::now();
     for check in &mut activity.checkpoints {
         check.status = Status::Unverified;
@@ -1076,8 +1231,23 @@ pub fn compare(activity: &mut Analysis, progress: &Analysis) {
         .iter()
         .filter(|(_, r)| root.tag == "PACKETTRACER5" || r == "current")
         .collect();
+    let mut configs = Vec::new();
+    descendants(&root, "RUNNINGCONFIG", &mut configs);
+    fn text_bytes(n: &Node) -> usize {
+        n.text
+            .len()
+            .saturating_add(n.children.iter().map(text_bytes).sum::<usize>())
+    }
+    let config_bytes = configs.iter().map(|n| text_bytes(n)).sum::<usize>();
+    if activity.checkpoints.len().saturating_mul(config_bytes) > 512 * 1024 * 1024 {
+        activity.diagnostics.push(
+            "Configuration verification byte budget exceeded; results remain Unverified".into(),
+        );
+        return;
+    }
     for check in &mut activity.checkpoints {
         if current.len() != 1
+            || crate::cisco::mapping::identity_conflict(check)
             || check.device.is_empty()
             || sentinel(&check.expected)
             || check.evidence.iter().any(|s| {
@@ -1091,6 +1261,20 @@ pub fn compare(activity: &mut Analysis, progress: &Analysis) {
         }
         let Some(tag) = property_tag(&check.property, &check.path) else {
             check.explanation = "Unsupported assessment check type; not evaluated".into();
+            if let Some(lines) = uniquely_owned_config(current[0].0, &check.device) {
+                let text = lines.join("\n");
+                let observation = crate::cisco::validator::DeviceObservation {
+                    device: &check.device,
+                    unique_current_snapshot: true,
+                    unique_device: true,
+                    configuration: &text,
+                };
+                let result = crate::cisco::validator::validate(check, &observation);
+                check.status = result.status;
+                check.current = result.current;
+                check.explanation = result.explanation;
+                check.evidence.extend(result.evidence);
+            }
             continue;
         };
         if matches!(
@@ -1100,12 +1284,32 @@ pub fn compare(activity: &mut Analysis, progress: &Analysis) {
         {
             continue;
         }
+        // Use the same explicit sibling evidence as generation. A raw OSPF RouteN
+        // leaf may omit process metadata; never compare it as a static route or
+        // silently ignore its explicit process requirement.
+        let expected = if matches!(tag, "STATIC_ROUTE" | "IPV6_STATIC_ROUTE" | "OSPF_NETWORK") {
+            match crate::commands::explicit_value(check) {
+                Ok(value) => value,
+                Err(reason) => {
+                    check.explanation = reason.into();
+                    continue;
+                }
+            }
+        } else {
+            check.expected.clone()
+        };
         let values = observations(current[0].0, &check.device, &check.interface, tag);
         if values.is_empty() {
-            if matches!(tag, "STATIC_ROUTE" | "IPV6_STATIC_ROUTE" | "OSPF_NETWORK") {
-                let mut configs = Vec::new();
-                descendants(current[0].0, "RUNNINGCONFIG", &mut configs);
-                if configs.len() == 1 {
+            if matches!(tag, "STATIC_ROUTE" | "IPV6_STATIC_ROUTE" | "OSPF_NETWORK")
+                && semantic_equal(tag, &expected, &expected).is_some()
+            {
+                if let Some(lines) = uniquely_owned_config(current[0].0, &check.device) {
+                    // Opaque/multiline constructs and commands our parser cannot safely
+                    // scope are not evidence of absence.
+                    let parsed = crate::cisco::parser::parse(&lines.join("\n"));
+                    if !parsed.reliable {
+                        continue;
+                    }
                     check.current = Some("none".into());
                     check.status = Status::Failed;
                     check.explanation = match tag {
@@ -1142,7 +1346,7 @@ pub fn compare(activity: &mut Analysis, progress: &Analysis) {
         );
         let comparisons: Option<Vec<bool>> = values
             .iter()
-            .map(|actual| semantic_equal(tag, check.expected.trim(), actual))
+            .map(|actual| semantic_equal(tag, expected.trim(), actual))
             .collect();
         let Some(comparisons) = comparisons else {
             if tag == "STATIC_ROUTE" {
@@ -1207,6 +1411,11 @@ pub fn compare(activity: &mut Analysis, progress: &Analysis) {
     if current.len() != 1 {
         activity.diagnostics.push("Comparison requires exactly one explicitly identified current network or a standalone PKT".into());
     }
+    activity.command_coverage.validation_verified = activity
+        .checkpoints
+        .iter()
+        .filter(|c| c.status != Status::Unverified)
+        .count();
     activity.timings.push((
         "Validation (ms)".into(),
         validation_started.elapsed().as_secs_f64() * 1000.0,

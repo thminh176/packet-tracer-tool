@@ -113,24 +113,11 @@ impl NormalizedNetwork {
             return Self::from_ip_and_prefix(addr, prefix, trimmed.to_string());
         }
 
-        // Case 2: Packet Tracer hyphenated notation "100.0.0.0-8"
-        // Note: Can also appear as "100.0.0.0-8-..." in static routes; if extra parts exist,
-        // take the first two segments.
-        if let Some((addr_part, rest)) = trimmed.split_once('-') {
-            if let Ok(addr) = addr_part.trim().parse::<Ipv4Addr>() {
-                // If rest starts with a valid prefix 0..=32
-                let prefix_candidate = rest.split('-').next().unwrap_or(rest).trim();
-                if let Ok(prefix) = prefix_candidate.parse::<u8>() {
-                    if prefix <= 32 {
-                        let mut norm = Self::from_ip_and_prefix(addr, prefix, trimmed.to_string())?;
-                        norm.explanation = format!(
-                            "Packet Tracer hyphenated encoding normalized to {}/{} (mask {}, wildcard {})",
-                            norm.network, norm.prefix, norm.subnet_mask, norm.wildcard_mask
-                        );
-                        return Some(norm);
-                    }
-                }
-            }
+        // A network value has exactly two structural fields.
+        if let Some((addr_part, prefix_part)) = trimmed.split_once('-') {
+            let addr = addr_part.trim().parse().ok()?;
+            let prefix = prefix_part.trim().parse().ok()?;
+            return Self::from_ip_and_prefix(addr, prefix, trimmed.to_string());
         }
 
         // Case 3: Space-separated "100.0.0.0 255.0.0.0" or "100.0.0.0 0.255.255.255"
@@ -138,6 +125,9 @@ impl NormalizedNetwork {
         if tokens.len() == 2 {
             let addr: Ipv4Addr = tokens[0].parse().ok()?;
             if let Ok(mask) = tokens[1].parse::<Ipv4Addr>() {
+                if is_contiguous_mask(mask) && is_contiguous_wildcard(mask) {
+                    return None;
+                }
                 if is_contiguous_mask(mask) {
                     let prefix = subnet_to_prefix(mask)?;
                     return Self::from_ip_and_prefix(addr, prefix, trimmed.to_string());
@@ -146,19 +136,6 @@ impl NormalizedNetwork {
                     return Self::from_ip_and_prefix(addr, prefix, trimmed.to_string());
                 }
             }
-        }
-
-        // Case 4: Plain IP without mask - determine default classful prefix if requested,
-        // but here report classful with Medium confidence.
-        if let Ok(addr) = trimmed.parse::<Ipv4Addr>() {
-            let prefix = classful_prefix(addr);
-            let mut norm = Self::from_ip_and_prefix(addr, prefix, trimmed.to_string())?;
-            norm.confidence = Confidence::Medium;
-            norm.explanation = format!(
-                "Classful default /{prefix} inferred for IPv4 address {addr} (mask {})",
-                norm.subnet_mask
-            );
-            return Some(norm);
         }
 
         None
@@ -381,7 +358,7 @@ impl ParsedStaticRoute {
     fn parse_hyphenated(input: &str) -> Option<Self> {
         // Hyphenated format: <net>-<prefix>[-<target>[-<metric>[-<distance>]]]
         let parts: Vec<&str> = input.split('-').collect();
-        if parts.len() < 2 {
+        if !matches!(parts.len(), 2 | 3 | 5) {
             return None;
         }
 
@@ -410,18 +387,27 @@ impl ParsedStaticRoute {
         if parts.len() >= 3 {
             let target = parts[2].trim();
             if let Ok(ip) = target.parse::<Ipv4Addr>() {
+                if ip.octets()[0] == 0 || ip.is_loopback() || ip.octets()[0] >= 224 {
+                    return None;
+                }
                 next_hop = Some(ip);
             } else if is_valid_interface_name(target) {
                 exit_interface = Some(target.to_string());
+            } else {
+                return None;
             }
         }
 
-        if parts.len() >= 5 {
-            if let Ok(dist) = parts[4].trim().parse::<u8>() {
-                if (1..=255).contains(&dist) {
-                    distance = Some(dist);
-                }
+        if parts.len() == 5 {
+            // Only the observed zero reserved field is supported.
+            if parts[3].trim() != "0" {
+                return None;
             }
+            let dist = parts[4].trim().parse::<u8>().ok()?;
+            if dist == 0 {
+                return None;
+            }
+            distance = Some(dist);
         }
 
         let is_complete = next_hop.is_some() || exit_interface.is_some();
@@ -448,7 +434,7 @@ impl ParsedStaticRoute {
             .split_whitespace()
             .collect();
 
-        if tokens.len() < 3 {
+        if !matches!(tokens.len(), 3 | 4) {
             return None;
         }
 
@@ -469,6 +455,9 @@ impl ParsedStaticRoute {
 
         let target = tokens[2];
         if let Ok(ip) = target.parse::<Ipv4Addr>() {
+            if ip.octets()[0] == 0 || ip.is_loopback() || ip.octets()[0] >= 224 {
+                return None;
+            }
             next_hop = Some(ip);
         } else if is_valid_interface_name(target) {
             exit_interface = Some(target.to_string());
@@ -476,12 +465,12 @@ impl ParsedStaticRoute {
             return None;
         }
 
-        if tokens.len() >= 4 {
-            if let Ok(dist) = tokens[3].parse::<u8>() {
-                if (1..=255).contains(&dist) {
-                    distance = Some(dist);
-                }
+        if tokens.len() == 4 {
+            let dist = tokens[3].parse::<u8>().ok()?;
+            if dist == 0 {
+                return None;
             }
+            distance = Some(dist);
         }
 
         Some(Self {
@@ -546,8 +535,81 @@ impl ParsedIpv6StaticRoute {
             return None;
         }
 
+        // Explicit IOS prefix/length, target, optional next hop and distance.
+        if trimmed
+            .strip_prefix("ipv6 route ")
+            .unwrap_or(trimmed)
+            .split_whitespace()
+            .next()
+            .is_some_and(|token| token.contains('/') && token.contains(':') && !token.contains('-'))
+        {
+            let tokens: Vec<_> = trimmed
+                .strip_prefix("ipv6 route ")
+                .unwrap_or(trimmed)
+                .split_whitespace()
+                .collect();
+            if !(2..=4).contains(&tokens.len()) {
+                return None;
+            }
+            let (addr, length) = tokens[0].split_once('/')?;
+            let dest: Ipv6Addr = addr.parse().ok()?;
+            let prefix: u8 = length.parse().ok()?;
+            if prefix > 128 {
+                return None;
+            }
+            let mask = if prefix == 0 {
+                0
+            } else {
+                u128::MAX << (128 - prefix)
+            };
+            if u128::from(dest) & !mask != 0 {
+                return None;
+            }
+            let mut index = 2;
+            let (exit_interface, next_hop) = if is_valid_interface_name(tokens[1]) {
+                let next = tokens.get(index).and_then(|v| v.parse::<Ipv6Addr>().ok());
+                if next.is_some() {
+                    index += 1;
+                }
+                (Some(tokens[1].to_string()), next)
+            } else {
+                (None, Some(tokens[1].parse::<Ipv6Addr>().ok()?))
+            };
+            if next_hop
+                .is_some_and(|ip| ip.is_unspecified() || ip.is_multicast() || ip.is_loopback())
+            {
+                return None;
+            }
+            let distance = if index < tokens.len() {
+                let d = tokens[index].parse::<u8>().ok()?;
+                if d == 0 {
+                    return None;
+                }
+                index += 1;
+                Some(d)
+            } else {
+                None
+            };
+            if index != tokens.len() {
+                return None;
+            }
+            let is_complete = !next_hop.is_some_and(|ip| {
+                (ip.segments()[0] & 0xffc0) == 0xfe80 && exit_interface.is_none()
+            });
+            return Some(Self {
+                raw: trimmed.into(),
+                destination: dest,
+                prefix,
+                next_hop,
+                exit_interface,
+                distance,
+                is_default: dest.is_unspecified() && prefix == 0,
+                is_complete,
+            });
+        }
+
         let parts: Vec<&str> = trimmed.split('-').collect();
-        if parts.len() < 2 {
+        if !matches!(parts.len(), 2 | 3 | 5) {
             return None;
         }
 
@@ -557,6 +619,14 @@ impl ParsedIpv6StaticRoute {
             return None;
         }
 
+        let mask = if prefix == 0 {
+            0
+        } else {
+            u128::MAX << (128 - prefix)
+        };
+        if u128::from(dest) & !mask != 0 {
+            return None;
+        }
         let is_default = dest == Ipv6Addr::UNSPECIFIED && prefix == 0;
         let mut next_hop = None;
         let mut exit_interface = None;
@@ -565,21 +635,33 @@ impl ParsedIpv6StaticRoute {
         if parts.len() >= 3 {
             let target = parts[2].trim();
             if let Ok(ip) = target.parse::<Ipv6Addr>() {
+                if ip.is_unspecified() || ip.is_multicast() || ip.is_loopback() {
+                    return None;
+                }
                 next_hop = Some(ip);
             } else if is_valid_interface_name(target) {
                 exit_interface = Some(target.to_string());
+            } else {
+                return None;
             }
         }
 
-        if parts.len() >= 5 {
-            if let Ok(dist) = parts[4].trim().parse::<u8>() {
-                if (1..=255).contains(&dist) {
-                    distance = Some(dist);
-                }
+        if parts.len() == 5 {
+            // Only the observed zero reserved field is supported.
+            if parts[3].trim() != "0" {
+                return None;
             }
+            let dist = parts[4].trim().parse::<u8>().ok()?;
+            if dist == 0 {
+                return None;
+            }
+            distance = Some(dist);
         }
 
-        let is_complete = next_hop.is_some() || exit_interface.is_some();
+        let is_complete = (next_hop.is_some() || exit_interface.is_some())
+            && !next_hop.is_some_and(|ip| {
+                (ip.segments()[0] & 0xffc0) == 0xfe80 && exit_interface.is_none()
+            });
 
         Some(Self {
             raw: trimmed.to_string(),
@@ -599,9 +681,10 @@ impl ParsedIpv6StaticRoute {
             return None;
         }
         let target = match (&self.next_hop, &self.exit_interface) {
-            (Some(ip), _) => ip.to_string(),
-            (_, Some(iface)) => iface.clone(),
-            (None, None) => return None,
+            (Some(ip), Some(iface)) => format!("{iface} {ip}"),
+            (Some(ip), None) if (ip.segments()[0] & 0xffc0) != 0xfe80 => ip.to_string(),
+            (None, Some(iface)) => iface.clone(),
+            _ => return None,
         };
 
         let mut cmd = format!("ipv6 route {}/{} {}", self.destination, self.prefix, target);
@@ -659,7 +742,7 @@ impl ParsedOspfNetwork {
                 let net: Ipv4Addr = tokens[0].parse().map_err(|e| format!("{e}"))?;
                 let wildcard: Ipv4Addr = tokens[1].parse().map_err(|e| format!("{e}"))?;
                 let area = tokens[3].to_string();
-                if is_sentinel(&area) || area == "4294967295" {
+                if !valid_ospf_area(&area) {
                     return Err("Sentinel or invalid area in OSPF specification".into());
                 }
                 return Ok(Self {
@@ -682,7 +765,7 @@ impl ParsedOspfNetwork {
                 (tokens[0].parse::<Ipv4Addr>(), tokens[1].parse::<Ipv4Addr>())
             {
                 let area = tokens[2].to_string();
-                if is_sentinel(&area) || area == "4294967295" {
+                if !valid_ospf_area(&area) {
                     return Err("Sentinel or invalid area in OSPF specification".into());
                 }
                 return Ok(Self {
@@ -706,7 +789,7 @@ impl ParsedOspfNetwork {
                 tokens[2].parse::<Ipv4Addr>(),
             ) {
                 let area = tokens[3].to_string();
-                if pid == 0 || pid >= 65535 || is_sentinel(&area) || area == "4294967295" {
+                if pid == 0 || pid >= 65535 || !valid_ospf_area(&area) {
                     return Err("Sentinel or invalid process/area in OSPF specification".into());
                 }
                 return Ok(Self {
@@ -741,28 +824,48 @@ impl ParsedOspfNetwork {
 
     /// Set or supply the OSPF process ID.
     pub fn with_process_id(mut self, pid: u32) -> Self {
-        self.process_id = Some(pid);
-        self.missing_fields.retain(|f| f != "OSPF process ID");
-        self.is_complete = self.area.is_some();
+        self.process_id = (pid > 0 && pid < 65535).then_some(pid);
+        self.refresh_completeness();
         self
     }
 
     /// Set or supply the OSPF area ID.
     pub fn with_area(mut self, area: impl Into<String>) -> Self {
-        self.area = Some(area.into());
-        self.missing_fields.retain(|f| f != "OSPF area ID");
-        self.is_complete = true;
+        let area = area.into();
+        self.area = valid_ospf_area(&area).then_some(area);
+        self.refresh_completeness();
         self
+    }
+
+    fn refresh_completeness(&mut self) {
+        self.missing_fields.clear();
+        if self.process_id.is_none() {
+            self.missing_fields.push("OSPF process ID".into());
+        }
+        if self.area.is_none() {
+            self.missing_fields.push("OSPF area ID".into());
+        }
+        self.is_complete = self.missing_fields.is_empty();
     }
 
     /// Generate Cisco IOS OSPF statement: `network <address> <wildcard-mask> area <area-id>`
     pub fn to_cisco_command(&self) -> Option<String> {
+        if !self.process_id.is_some_and(|pid| pid > 0 && pid < 65535) {
+            return None;
+        }
         let area = self.area.as_ref()?;
+        if !valid_ospf_area(area) {
+            return None;
+        }
         Some(format!(
             "network {} {} area {}",
             self.network, self.wildcard_mask, area
         ))
     }
+}
+
+fn valid_ospf_area(area: &str) -> bool {
+    !is_sentinel(area) && (area.parse::<u32>().is_ok() || area.parse::<Ipv4Addr>().is_ok())
 }
 
 /// Validate if an interface name matches Cisco IOS naming conventions.
@@ -788,11 +891,13 @@ pub fn is_valid_interface_name(s: &str) -> bool {
 
     for p in prefixes {
         if let Some(tail) = lower.strip_prefix(p) {
-            if tail.starts_with(|c: char| c.is_ascii_digit())
-                && tail
-                    .chars()
-                    .all(|c| c.is_ascii_digit() || c == '/' || c == '.')
-            {
+            let mut parts = tail.split('.');
+            let base = parts.next().unwrap_or("");
+            let sub = parts.next();
+            let number = |n: &str| {
+                !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) && n.parse::<u32>().is_ok()
+            };
+            if parts.next().is_none() && base.split('/').all(number) && sub.is_none_or(number) {
                 return true;
             }
         }

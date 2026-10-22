@@ -6,7 +6,16 @@
 
 Dự án **không liên kết và không được Cisco bảo trợ**. Cisco và Packet Tracer là nhãn hiệu của chủ sở hữu tương ứng. Repo không chứa chương trình Cisco, logo, giáo trình, bài thi riêng hay đáp án.
 
-## Chức năng v0.1.1
+![Thư viện lệnh Windows với dữ liệu tổng hợp](docs/images/cisco-library-windows.png)
+
+## Chức năng v0.2.0
+
+- Thư viện lệnh Cisco song ngữ (Ctrl+7): 46 nhóm lệnh có tham số, chế độ cấu hình, điều kiện tiên quyết, hồ sơ thiết bị và liên kết tài liệu Cisco.
+- Gợi ý gán VLAN từ yêu cầu cụ thể; không tự thêm chế độ cổng hay giả trạng thái đã xác minh.
+- OSPF phải có process/area rõ ràng; đối chiếu tuyến chỉ dùng cấu hình hiện tại thuộc đúng thiết bị được nhận diện duy nhất.
+- Phân tích cấu hình IOS theo ngữ cảnh; đối chiếu một số trường cổng và switching cụ thể. Tách số tiêu chí sinh được lệnh khỏi số tiêu chí đã đối chiếu. Xem [phạm vi lệnh](docs/CISCO_COMMAND_COVERAGE.md).
+
+Các nhóm lệnh mới được kiểm thử tổng hợp; chưa xác nhận thực thi trên thiết bị Packet Tracer thật. Một số mô tả kỹ thuật vẫn dùng tiếng Anh.
 
 - Mở tệp PKA/PKT thuộc định dạng được hỗ trợ ở chế độ chỉ đọc, xem XML.
 - Hiện tiêu chí theo thiết bị/cổng, giá trị yêu cầu, điểm và bằng chứng đối chiếu.
@@ -21,7 +30,7 @@ Dự án **không liên kết và không được Cisco bảo trợ**. Cisco và
 
 ## Cài đặt
 
-Tải `packet-tracer-tool-v0.1.1-windows-x64.zip` và `.sha256` tại [Releases](https://github.com/thminh176/packet-tracer-tool/releases). Kiểm tra checksum, giải nén toàn bộ và chạy `pka-lab-inspector.exe`. EXE chưa ký số. Giữ thư mục `locales` cạnh EXE để sửa hoặc thêm bản dịch.
+Tải `packet-tracer-tool-v0.2.0-windows-x64.zip` và `.sha256` tại [Releases](https://github.com/thminh176/packet-tracer-tool/releases). Kiểm tra checksum, giải nén toàn bộ và chạy `pka-lab-inspector.exe`. EXE chưa ký số. Giữ thư mục `locales` cạnh EXE để sửa hoặc thêm bản dịch.
 
 Mở bài, đọc chẩn đoán, rồi nạp tệp cấu hình đã lưu để đối chiếu nếu cần. **Lệnh IOS phải dán vào Packet Tracer → đúng thiết bị → CLI; không chạy trong PowerShell.** PC/máy chủ dùng hướng dẫn giao diện. Ứng dụng không tự thực thi lệnh và không sửa tệp PKA/PKT gốc.
 
@@ -31,7 +40,7 @@ Mở bài, đọc chẩn đoán, rồi nạp tệp cấu hình đã lưu để �
 
 Định tuyến tĩnh và khai báo mạng OSPF được đối chiếu trực tiếp với running-config; tuy nhiên việc mô phỏng hội tụ định tuyến động, tính toán metric, kiểm tra toàn diện VLAN/ACL/NAT/DHCP, chấm bằng script, định dạng cũ và tích hợp trực tiếp Packet Tracer vẫn nằm ngoài phạm vi ngoại tuyến. Xem [bằng chứng kiểm thử](docs/TEST_RESULTS.md) và [tương thích](docs/COMPATIBILITY.md).
 
-Chưa xác nhận mẫu 32 tiêu chí/100 điểm/7 thiết bị hoặc bài PKA thật có 126 tiêu chí. Mẫu tổng hợp 126 tiêu chí chỉ kiểm tra cấu trúc và một phần đối chiếu.
+Bộ bản sao riêng được phép kiểm thử gồm 25 PKA và bảy PKT đều giải mã được; một mẫu khớp cấu trúc 32 tiêu chí/100 điểm/7 thiết bị. Đây là bằng chứng đọc/phân tích, chưa xác nhận thực thi lệnh hay kết quả chấm Cisco. Chưa xác nhận bài PKA thật có 126 tiêu chí. Mẫu tổng hợp 126 tiêu chí chỉ kiểm tra cấu trúc và một phần đối chiếu. Xem [kết quả tệp thật](docs/REAL_FILE_REVIEW.md).
 
 Tiếng Việt (`vi-VN`) và English (`en-US`) dùng JSON với fallback tiếng Anh. Tên thiết bị, giá trị kỹ thuật và cú pháp IOS giữ nguyên. Báo cáo và một số thông báo chưa dịch vẫn dùng tiếng Anh. [Hướng dẫn thêm ngôn ngữ](docs/LOCALIZATION.md).
 

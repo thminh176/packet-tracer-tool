@@ -1,6 +1,10 @@
 //! Conservative, offline CLI suggestions. Complex values use the explicit grammars
 //! documented in `generate`; unknown assessment encodings are never CLI values.
 use crate::model::{Checkpoint, Command};
+mod assignment;
+pub(crate) fn checkpoint_vlan(c: &Checkpoint) -> Option<u16> {
+    assignment::vlan_context(c)
+}
 use std::{
     collections::{BTreeMap, HashSet},
     net::{Ipv4Addr, Ipv6Addr},
@@ -17,6 +21,21 @@ fn key(s: &str) -> String {
         .filter(|c| c.is_ascii_alphanumeric())
         .flat_map(char::to_lowercase)
         .collect()
+}
+pub(crate) fn ipv6_address_context(path: &str) -> bool {
+    path.split(" / ")
+        .any(|part| matches!(key(part).as_str(), "ipv6address" | "ipv6addresses"))
+}
+/// Preserve raw labels while resolving documented address-field context.
+pub(crate) fn property_key(c: &Checkpoint) -> String {
+    let p = key(&c.property);
+    match p.as_str() {
+        "ipaddress" if ipv6_address_context(&c.path) => "ipv6address".into(),
+        "prefixlength" if ipv6_address_context(&c.path) => "ipv6prefixlength".into(),
+        "linklocal" => "ipv6linklocal".into(),
+        "defaultgatewayipv6" => "ipv6defaultgateway".into(),
+        _ => p,
+    }
 }
 fn token(s: &str) -> bool {
     !s.is_empty()
@@ -126,33 +145,64 @@ pub fn is_static_route_property(property: &str, path: &str) -> bool {
     let p = key(property);
     let path_k = key(path);
     (p.contains("staticroute")
-        || p.starts_with("route")
+        || indexed_route(&p)
         || p.ends_with("staticroutesv2")
         || path_k.contains("staticroutes")
         || path_k.contains("staticroute"))
         && !path_k.contains("routesv6")
         && !p.contains("ipv6")
+        && dynamic_routing_branch(path).is_none()
 }
 
 pub fn is_ipv6_static_route_property(property: &str, path: &str) -> bool {
     let p = key(property);
     let path_k = key(path);
-    p.contains("ipv6staticroute")
-        || path_k.contains("routesv6")
-        || (p.contains("route") && (p.contains("v6") || path_k.contains("v6")))
+    dynamic_routing_branch(path).is_none()
+        && (p.contains("ipv6staticroute")
+            || (path_k.contains("routesv6") && (indexed_route(&p) || p.starts_with("staticroute")))
+            || (p.contains("route") && (p.contains("v6") || path_k.contains("v6"))))
+}
+
+fn indexed_route(property: &str) -> bool {
+    property
+        .strip_prefix("route")
+        .is_some_and(|suffix| suffix.is_empty() || suffix.bytes().all(|b| b.is_ascii_digit()))
+}
+
+// Only protocol branch labels count; a device called OSPF-Router is not a protocol.
+fn dynamic_routing_branch(path: &str) -> Option<&'static str> {
+    path.split('/').find_map(|part| match key(part).as_str() {
+        "ospf" | "ospfv2" => Some("ospf"),
+        "ospfv3" => Some("ospfv3"),
+        "eigrp" | "eigrpv6" => Some("eigrp"),
+        "rip" | "ripv2" | "ripng" => Some("rip"),
+        "bgp" => Some("bgp"),
+        _ => None,
+    })
 }
 
 pub fn is_ospf_network_property(property: &str, path: &str) -> bool {
     let p = key(property);
-    let path_k = key(path);
-    p.contains("ospfnetwork")
-        || (path_k.contains("ospf")
-            && (p.contains("network") || p.contains("route") || p.contains("address")))
+    dynamic_routing_branch(path) != Some("ospfv3")
+        && (p.contains("ospfnetwork")
+            || (dynamic_routing_branch(path) == Some("ospf")
+                && (p.contains("network") || indexed_route(&p))))
 }
 
 // The inspector may attach a uniquely matched explicit sibling requirement.
 // Evidence is never interpreted as raw CLI or mined for arbitrary numbers.
-fn explicit_value(c: &Checkpoint) -> Result<String, &'static str> {
+pub(crate) fn explicit_value(c: &Checkpoint) -> Result<String, &'static str> {
+    if c.evidence
+        .iter()
+        .any(|e| e.starts_with("commands:context-conflict="))
+    {
+        return Err("Conflicting explicit sibling address or prefix context");
+    }
+    if key(&format!("{} {}", c.property, c.path)).contains("ospfv3") {
+        return Err(
+            "OSPFv3 has different IPv6 process/interface semantics and is not supported by the OSPFv2 workflow",
+        );
+    }
     if c.evidence.iter().any(|e| {
         [
             "assessment:unsupported",
@@ -164,10 +214,62 @@ fn explicit_value(c: &Checkpoint) -> Result<String, &'static str> {
     }) {
         return Err("Unsupported assessment check type; no reliable configuration requirement.");
     }
-    let property = key(&c.property);
+    let property = property_key(c);
+    if property == "ipv6prefixlength" {
+        if !number(c.expected.trim(), 0, 128) {
+            return Err("Invalid explicit IPv6 prefix length");
+        }
+        let addresses: std::collections::BTreeSet<_> = c
+            .evidence
+            .iter()
+            .filter_map(|e| e.strip_prefix("commands:ipv6-address="))
+            .collect();
+        if addresses.len() != 1 {
+            return Err("IPv6 prefix requires one explicit sibling address");
+        }
+        let address = addresses
+            .first()
+            .unwrap()
+            .parse::<Ipv6Addr>()
+            .map_err(|_| "Invalid explicit IPv6 sibling address")?;
+        return Ok(format!("{address}/{}", c.expected.trim()));
+    }
     if is_static_route_property(&c.property, &c.path) {
         if let Ok(mut r) = crate::network_values::ParsedStaticRoute::parse(&c.expected) {
+            let targets: std::collections::BTreeSet<_> = c
+                .evidence
+                .iter()
+                .filter_map(|e| e.strip_prefix("commands:route-next-hop="))
+                .collect();
+            if targets.len() > 1 {
+                return Err("Conflicting explicit route forwarding targets");
+            }
+            if r.is_complete
+                && let Some(target) = targets.first()
+            {
+                let matches = target
+                    .parse::<Ipv4Addr>()
+                    .ok()
+                    .is_some_and(|ip| r.next_hop == Some(ip))
+                    || crate::cisco::parser::interface_name(target).is_some_and(|interface| {
+                        r.exit_interface
+                            .as_deref()
+                            .and_then(crate::cisco::parser::interface_name)
+                            == Some(interface)
+                    });
+                if !matches {
+                    return Err("Route requirement conflicts with explicit forwarding target");
+                }
+            }
             if !r.is_complete {
+                let targets: std::collections::BTreeSet<_> = c
+                    .evidence
+                    .iter()
+                    .filter_map(|e| e.strip_prefix("commands:route-next-hop="))
+                    .collect();
+                if targets.len() > 1 {
+                    return Err("Conflicting explicit route forwarding targets");
+                }
                 for ev in &c.evidence {
                     if let Some(target) = ev.strip_prefix("commands:route-next-hop=") {
                         if let Ok(nh) = target.parse::<Ipv4Addr>() {
@@ -190,28 +292,45 @@ fn explicit_value(c: &Checkpoint) -> Result<String, &'static str> {
     }
     if is_ospf_network_property(&c.property, &c.path) {
         if let Ok(mut o) = crate::network_values::ParsedOspfNetwork::parse(&c.expected) {
+            let mut process_seen = o.process_id;
+            let area_number = |area: &str| {
+                area.parse::<u32>()
+                    .ok()
+                    .or_else(|| area.parse::<Ipv4Addr>().ok().map(u32::from))
+            };
+            let mut area_seen = o.area.as_deref().and_then(area_number);
             for ev in &c.evidence {
                 if let Some(pid_str) = ev.strip_prefix("commands:ospf-process=") {
-                    if let Ok(pid) = pid_str.parse::<u32>() {
-                        o = o.with_process_id(pid);
+                    let pid = pid_str
+                        .parse::<u16>()
+                        .ok()
+                        .filter(|n| *n > 0)
+                        .ok_or("Invalid explicit OSPF process metadata")?
+                        as u32;
+                    if process_seen.is_some_and(|seen| seen != pid) {
+                        return Err("Conflicting explicit OSPF process metadata");
                     }
+                    process_seen = Some(pid);
+                    o = o.with_process_id(pid);
                 }
                 if let Some(area_str) = ev.strip_prefix("commands:ospf-area=") {
+                    let area =
+                        area_number(area_str).ok_or("Invalid explicit OSPF area metadata")?;
+                    if area_seen.is_some_and(|seen| seen != area) {
+                        return Err("Conflicting explicit OSPF area metadata");
+                    }
+                    area_seen = Some(area);
                     o = o.with_area(area_str);
                 }
             }
-            if o.process_id.is_none() && o.area.is_some() {
-                o = o.with_process_id(1);
+            if o.is_complete
+                && let (Some(pid), Some(area)) = (o.process_id, o.area.as_deref())
+            {
+                return Ok(format!("{pid} {} {} {}", o.network, o.wildcard_mask, area));
             }
-            if o.is_complete {
-                let pid = o.process_id.unwrap_or(1);
-                return Ok(format!(
-                    "{pid} {} {} {}",
-                    o.network,
-                    o.wildcard_mask,
-                    o.area.as_deref().unwrap_or("0")
-                ));
-            }
+            return Err(
+                "OSPF requires an explicit process ID, network, wildcard and area; no defaults are inferred",
+            );
         }
         return Ok(c.expected.clone());
     }
@@ -226,6 +345,13 @@ fn explicit_value(c: &Checkpoint) -> Result<String, &'static str> {
             {
                 if prefix <= 32 {
                     if let Some(mask) = crate::network_values::prefix_to_subnet(prefix) {
+                        if c.evidence
+                            .iter()
+                            .filter_map(|e| e.strip_prefix("commands:ipv4-mask="))
+                            .any(|extra| extra.parse::<Ipv4Addr>().ok() != Some(mask))
+                        {
+                            return Err("IP prefix conflicts with explicit sibling subnet mask");
+                        }
                         return Ok(format!("{ip_addr} {mask}"));
                     }
                 }
@@ -284,7 +410,15 @@ fn explicit_value(c: &Checkpoint) -> Result<String, &'static str> {
 }
 
 fn plan(c: &Checkpoint) -> Result<Plan, &'static str> {
-    if !safe(&c.expected)
+    if crate::cisco::mapping::identity_conflict(c) {
+        return Err("Conflicting device model/type evidence; no commands generated");
+    }
+    let safe_vlan_list = property_key(c) == "allowedvlans"
+        && c.expected.len() <= 1024
+        && !c.expected.chars().any(char::is_control)
+        && crate::cisco::vlan_list(&c.expected.split_whitespace().collect::<Vec<_>>().join(","))
+            .is_some();
+    if (!safe(&c.expected) && !safe_vlan_list)
         || !safe(&c.interface)
         || !safe(&c.device)
         || !safe(&c.property)
@@ -314,12 +448,69 @@ fn plan(c: &Checkpoint) -> Result<Plan, &'static str> {
             "Missing, unknown, or sentinel expected value; explicit configuration is required.",
         );
     }
-    let p = key(&c.property);
+    let p = property_key(c);
+    let profile = crate::cisco::mapping::profile(c);
+    use crate::cisco::DeviceProfile;
+    if matches!(
+        profile,
+        DeviceProfile::GenericRouter
+            | DeviceProfile::Router1941
+            | DeviceProfile::Router2911
+            | DeviceProfile::Isr4321
+    ) && matches!(p.as_str(), "defaultgateway" | "gateway")
+        && !c
+            .evidence
+            .iter()
+            .any(|s| s == "commands:parameter:ip_routing=disabled")
+    {
+        return Err(
+            "A router default gateway requires explicit disabled IP routing; use an explicitly specified default static route for routed traffic",
+        );
+    }
+    if matches!(
+        profile,
+        DeviceProfile::GenericSwitch | DeviceProfile::Catalyst2960 | DeviceProfile::Catalyst3560
+    ) && (matches!(
+        p.as_str(),
+        "natrole" | "natstatic" | "natoverload" | "natpool"
+    ) || p.starts_with("dhcp")
+        || p.starts_with("rip")
+        || p.starts_with("eigrp")
+        || matches!(p.as_str(), "standardacl" | "extendedacl" | "aclattachment"))
+    {
+        return Err(
+            "This router command family requires a separately implemented and evidenced switch-specific workflow",
+        );
+    }
+    if p == "portsecurity" && enabled(value) != Some(true) {
+        return Err(
+            "Only explicit port-security enablement is supported; disablement is not an automatic repair",
+        );
+    }
     let t: Vec<&str> = value.split_whitespace().collect();
     if t.iter()
         .any(|v| ["-1", "65535", "4294967295", "18446744073709551615"].contains(v))
     {
         return Err("Sentinel numeric value in explicit configuration; no commands generated.");
+    }
+    if let Some(assignment) = assignment::plan(c) {
+        return assignment;
+    }
+    if !is_gui(c) {
+        let explicit = explicit_value(c)?;
+        if let Some(request) = crate::cisco::mapping::request(c, &explicit)
+            && crate::cisco::catalog()
+                .iter()
+                .any(|s| s.id == request.family)
+        {
+            let typed = crate::cisco::generate(&request);
+            if !typed.executable() {
+                return Err(
+                    "Recognized requirement is incomplete, incompatible or unsafe; inspect required parameters and device compatibility in Cisco Command Library.",
+                );
+            }
+            return legacy_plan(&typed);
+        }
     }
     let mut out = Plan::default();
     let interface_property = matches!(
@@ -332,6 +523,7 @@ fn plan(c: &Checkpoint) -> Result<Plan, &'static str> {
             | "ipaddress"
             | "subnetmask"
             | "ipv6address"
+            | "ipv6prefixlength"
             | "ipv6linklocal"
             | "linklocaladdress"
             | "switchportmode"
@@ -372,7 +564,9 @@ fn plan(c: &Checkpoint) -> Result<Plan, &'static str> {
         "ipaddress" | "ipv4address" | "subnetmask" if t.len() == 2 && ip(t[0]) && mask(t[1]) => {
             format!("ip address {} {}", t[0], t[1])
         }
-        "ipv6address" if t.len() == 1 && prefix6(t[0]) => format!("ipv6 address {value}"),
+        "ipv6address" | "ipv6prefixlength" if t.len() == 1 && prefix6(t[0]) => {
+            format!("ipv6 address {value}")
+        }
         "ipv6linklocal" | "linklocaladdress"
             if t.len() == 1
                 && t[0]
@@ -512,7 +706,7 @@ fn plan(c: &Checkpoint) -> Result<Plan, &'static str> {
             out.context.push(format!("router eigrp {}", t[0]));
             format!("network {} {}", t[1], t[2])
         }
-        "enablesecret" if token(value) => format!("enable secret {value}"),
+        "enablesecret" if token(value) => format!("enable secret 0 {value}"),
         "passwordencryption" if enabled(value) == Some(true) => {
             "service password-encryption".into()
         }
@@ -543,7 +737,7 @@ fn plan(c: &Checkpoint) -> Result<Plan, &'static str> {
             "transport input ssh".into()
         }
         "localuser" if t.len() == 3 && identifier(t[0]) && number(t[1], 0, 15) && token(t[2]) => {
-            format!("username {} privilege {} secret {}", t[0], t[1], t[2])
+            format!("username {} privilege {} secret 0 {}", t[0], t[1], t[2])
         }
         "save" | "saveconfiguration" if enabled(value) == Some(true) => {
             out.save = true;
@@ -583,6 +777,24 @@ pub fn generate(checkpoint: &Checkpoint) -> Command {
         Ok(v) => v,
         Err(e) => return unsupported(e),
     };
+    if crate::cisco::mapping::parameter_conflict(checkpoint, &resolved) {
+        return unsupported("Conflicting explicit named parameter evidence; inspect requirements");
+    }
+    if !is_gui(checkpoint)
+        && assignment::plan(checkpoint).is_none()
+        && let Some(req) = crate::cisco::mapping::request(checkpoint, &resolved)
+        && crate::cisco::catalog().iter().any(|s| s.id == req.family)
+    {
+        let typed = crate::cisco::generate(&req);
+        if !typed.executable() {
+            return unsupported(&format!(
+                "{}; missing: {}; {}",
+                req.family,
+                typed.missing_parameters.join(", "),
+                typed.warnings.join("; ")
+            ));
+        }
+    }
     // Validate even GUI values before displaying them in guidance.
     if let Err(reason) = plan(checkpoint)
         && (!is_gui(checkpoint)
@@ -595,18 +807,18 @@ pub fn generate(checkpoint: &Checkpoint) -> Command {
         return unsupported(reason);
     }
     if is_gui(checkpoint) {
-        let property = key(&checkpoint.property);
+        let property = property_key(checkpoint);
         let valid = match property.as_str() {
             "ipv4address" | "ipaddress" => {
                 let t: Vec<_> = resolved.split_whitespace().collect();
                 t.len() == 2 && ip(t[0]) && mask(t[1])
             }
-            "defaultgateway" | "gateway" | "dnsserver" => {
+            "defaultgateway" | "gateway" | "dnsserver" | "ipv6defaultgateway" => {
                 ip(checkpoint.expected.trim())
                     || checkpoint.expected.trim().parse::<Ipv6Addr>().is_ok()
             }
             "subnetmask" => mask(checkpoint.expected.trim()),
-            "ipv6address" => prefix6(resolved.trim()),
+            "ipv6address" | "ipv6prefixlength" => prefix6(resolved.trim()),
             _ => false,
         };
         return if valid {
@@ -616,7 +828,7 @@ pub fn generate(checkpoint: &Checkpoint) -> Command {
                 text: format!(
                     "Desktop > IP Configuration: set {} to {}.",
                     checkpoint.property,
-                    if property == "subnetmask" {
+                    if matches!(property.as_str(), "subnetmask" | "ipv6prefixlength") {
                         checkpoint.expected.as_str()
                     } else {
                         resolved.as_str()
@@ -632,9 +844,44 @@ pub fn generate(checkpoint: &Checkpoint) -> Command {
         };
     }
     match plan(checkpoint) {
-        Ok(p) => Command { supported:true, gui:false, text:render(&[p]), explanation:"Review the explicit values and apply on the named device. No commands have been executed.".into() },
+        Ok(p) => Command {
+            supported: true,
+            gui: false,
+            text: render(&[p]),
+            explanation: if assignment::plan(checkpoint).is_some() {
+                "Requirement-based command suggestion; verify VLAN state and port mode where applicable. Current configuration has not been verified.".into()
+            } else {
+                "Review explicit values and device compatibility. Packet Tracer execution support is untested for this suggestion. No commands have been executed.".into()
+            },
+        },
         Err(e) => unsupported(e),
     }
+}
+
+fn legacy_plan(typed: &crate::cisco::CommandPlan) -> Result<Plan, &'static str> {
+    use crate::cisco::ConfigMode;
+    let Some(first) = typed.commands.first() else {
+        return Err("No executable commands");
+    };
+    if typed.commands.iter().any(|c| c.mode != first.mode) {
+        return Err(
+            "Multiple configuration contexts require individual review in Cisco Command Library",
+        );
+    }
+    let context = match &first.mode {
+        ConfigMode::Global | ConfigMode::Exec => vec![],
+        ConfigMode::Interface(v) => vec![format!("interface {v}")],
+        ConfigMode::Router(v) => vec![format!("router {v}")],
+        ConfigMode::Vlan(v) => vec![format!("vlan {v}")],
+        ConfigMode::Acl(v) => vec![v.clone()],
+        ConfigMode::DhcpPool(v) => vec![format!("ip dhcp pool {v}")],
+        ConfigMode::Line(v) => vec![format!("line {v}")],
+    };
+    Ok(Plan {
+        context,
+        lines: typed.commands.iter().map(|c| c.text.clone()).collect(),
+        save: first.mode == ConfigMode::Exec,
+    })
 }
 
 fn render(plans: &[Plan]) -> String {
@@ -692,7 +939,24 @@ fn interface_order(p: &Plan) -> u8 {
 }
 
 fn conflict_key(c: &Checkpoint, p: &Plan) -> Option<String> {
-    let mut property = key(&c.property);
+    let mut canonical = p.clone();
+    for context in &mut canonical.context {
+        if let Some(interface) = context
+            .strip_prefix("interface ")
+            .and_then(crate::cisco::parser::interface_name)
+        {
+            *context = format!("interface {interface}");
+        }
+    }
+    let p = &canonical;
+    // Equal destinations with distinct forwarding targets/distances are valid
+    // ECMP or floating static routes, not mutually exclusive scalar settings.
+    if is_static_route_property(&c.property, &c.path)
+        || is_ipv6_static_route_property(&c.property, &c.path)
+    {
+        return None;
+    }
+    let mut property = property_key(c);
     let t: Vec<_> = c.expected.split_whitespace().collect();
     if is_static_route_property(&c.property, &c.path) {
         if let Some(line) = p.lines.first() {
@@ -722,8 +986,7 @@ fn conflict_key(c: &Checkpoint, p: &Plan) -> Option<String> {
                 let pid = p
                     .context
                     .iter()
-                    .find_map(|c| c.strip_prefix("router ospf "))
-                    .unwrap_or("1");
+                    .find_map(|c| c.strip_prefix("router ospf "))?;
                 return Some(format!(
                     "{}:ospf:{pid}:{} {}",
                     p.context.join("/"),
@@ -748,6 +1011,7 @@ fn conflict_key(c: &Checkpoint, p: &Plan) -> Option<String> {
             property = "interface-state".into()
         }
         "ipaddress" | "ipv4address" => property = "ipv4address".into(),
+        "ipv6prefixlength" => property = "ipv6address".into(),
         "subnetmask"
             if !p
                 .context
@@ -757,10 +1021,24 @@ fn conflict_key(c: &Checkpoint, p: &Plan) -> Option<String> {
             property = "ipv4address".into()
         }
         "gateway" | "defaultgateway" => property = "gateway".into(),
+        "description" | "interfacedescription" => property = "description".into(),
+        "hostname" | "host name" => property = "hostname".into(),
         _ => (),
     }
     if property == "localuser" {
         property.push_str(c.expected.split_whitespace().next().unwrap_or(""));
+    }
+    // Several IPv6 addresses may coexist on an interface. Only differing
+    // prefixes for the same address are contradictory scalar requirements.
+    if property == "ipv6address"
+        && let Some(address) = p
+            .lines
+            .iter()
+            .find_map(|line| line.strip_prefix("ipv6 address "))
+        && let Some((address, _)) = address.split_once('/')
+        && let Ok(address) = address.parse::<Ipv6Addr>()
+    {
+        property = format!("ipv6address:{address}");
     }
     Some(format!("{}:{property}", p.context.join("/")))
 }
@@ -806,6 +1084,31 @@ pub fn device_script(checkpoints: &[Checkpoint], device: Option<&str>) -> String
             continue;
         }
         output.push_str(&format!("! Device: {name}\n"));
+        let profiles: Vec<_> = items
+            .iter()
+            .map(|c| crate::cisco::mapping::profile(c))
+            .collect();
+        use crate::cisco::DeviceProfile::*;
+        let has_router = profiles
+            .iter()
+            .any(|p| matches!(p, GenericRouter | Router1941 | Router2911 | Isr4321));
+        let has_switch = profiles
+            .iter()
+            .any(|p| matches!(p, GenericSwitch | Catalyst2960 | Catalyst3560));
+        let models: std::collections::BTreeSet<_> = profiles
+            .iter()
+            .filter(|p| !matches!(p, Unknown | GenericRouter | GenericSwitch))
+            .map(|p| p.label())
+            .collect();
+        if (has_router && has_switch)
+            || models.len() > 1
+            || items
+                .iter()
+                .any(|c| crate::cisco::mapping::identity_conflict(c))
+        {
+            output.push_str("! Skipped conflicting device identity/profile evidence; inspect individual requirements.\n");
+            continue;
+        }
         let mut values: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for c in &items {
             if let Some(p) = conflict_plan(c)
@@ -821,7 +1124,7 @@ pub fn device_script(checkpoints: &[Checkpoint], device: Option<&str>) -> String
         let mut unique_plans = HashSet::new();
         let mut omitted = 0;
         let mut conflicts = 0;
-        for c in items {
+        for c in &items {
             if conflict_plan(c)
                 .and_then(|p| conflict_key(c, &p))
                 .is_some_and(|k| values.get(&k).is_some_and(|v| v.len() > 1))
@@ -864,6 +1167,12 @@ pub fn device_script(checkpoints: &[Checkpoint], device: Option<&str>) -> String
             ));
         }
         if !plans.is_empty() {
+            if items
+                .iter()
+                .any(|c| assignment::plan(c).is_some_and(|p| p.is_ok()))
+            {
+                output.push_str("! Requirement-based assignments: verify port mode, VLAN state, VTP policy and peer VLANs before applying.\n");
+            }
             output.push_str(&render(&plans));
         }
         output.push('\n');

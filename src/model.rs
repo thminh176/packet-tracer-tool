@@ -21,6 +21,8 @@ pub struct Checkpoint {
     pub status: Status,
     pub explanation: String,
     pub evidence: Vec<String>,
+    #[serde(default)]
+    pub command_classification: crate::cisco::Classification,
 }
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Analysis {
@@ -28,6 +30,8 @@ pub struct Analysis {
     pub diagnostics: Vec<String>,
     pub xml: String,
     pub timings: Vec<(String, f64)>,
+    #[serde(default)]
+    pub command_coverage: crate::cisco::mapping::CheckpointCoverage,
 }
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Command {

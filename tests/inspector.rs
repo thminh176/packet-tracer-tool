@@ -28,6 +28,89 @@ fn activity(leaves: &str, snapshots: &str) -> String {
         )
     )
 }
+
+#[test]
+fn ipv6_generic_labels_pair_only_with_explicit_unique_siblings() {
+    use pka_lab_inspector::commands;
+    let ip = leaf("Address", "IP Address", "2001:db8:feed::5", "2");
+    let prefix = leaf("Prefix", "Prefix Length", "64", "3");
+    let xml = activity(
+        &branch(
+            "Ipv6 Address",
+            &branch("Address entry", &format!("{ip}{prefix}")),
+        ),
+        &network("192.0.2.1"),
+    );
+    let a = parse(&xml).unwrap();
+    assert_eq!(a.summary().total, 2);
+    assert_eq!(a.summary().unverified, 2);
+    for c in &a.checkpoints {
+        let command = commands::generate(c);
+        assert!(command.supported, "{}: {}", c.property, command.explanation);
+        assert!(command.text.contains("ipv6 address 2001:db8:feed::5/64"));
+    }
+    assert_eq!(
+        commands::device_script(&a.checkpoints, None)
+            .matches("ipv6 address ")
+            .count(),
+        1
+    );
+    for leaves in [ip.clone(), format!("{ip}{prefix}{prefix}")] {
+        let a = parse(&activity(
+            &branch("Ipv6 Address", &branch("Address entry", &leaves)),
+            &network("192.0.2.1"),
+        ))
+        .unwrap();
+        assert!(
+            a.checkpoints
+                .iter()
+                .all(|c| !commands::generate(c).supported)
+        );
+    }
+    let conflicting = format!(
+        "{}{}",
+        ip.replace("2001:db8:feed::5", "2001:db8:feed::5/48"),
+        prefix
+    );
+    let a = parse(&activity(
+        &branch("Ipv6 Address", &branch("Address entry", &conflicting)),
+        &network("192.0.2.1"),
+    ))
+    .unwrap();
+    assert!(
+        a.checkpoints
+            .iter()
+            .all(|c| !commands::generate(c).supported)
+    );
+    // A generic prefix elsewhere must never acquire IPv6 semantics from its number.
+    let a = parse(&activity(&format!("{ip}{prefix}"), &network("192.0.2.1"))).unwrap();
+    assert!(
+        a.checkpoints
+            .iter()
+            .all(|c| !commands::generate(c).supported)
+    );
+}
+
+#[test]
+fn ipv6_endpoint_gateway_alias_is_gui_only_and_numeric_states_stay_unknown() {
+    use pka_lab_inspector::{commands, model::Checkpoint};
+    let c = Checkpoint {
+        device: "Lab-PC".into(),
+        device_type: "Pc".into(),
+        property: "Default Gateway IPv6".into(),
+        expected: "fe80::5".into(),
+        ..Default::default()
+    };
+    let command = commands::generate(&c);
+    assert!(command.supported && command.gui);
+    for property in ["Port Status", "Startup Config", "IPv6 Unicast Routing"] {
+        let mut c = c.clone();
+        c.device_type = "Router".into();
+        c.property = property.into();
+        c.expected = "1".into();
+        assert!(!commands::generate(&c).supported);
+    }
+}
 fn fixture() -> String {
     activity(
         &leaf("IP", "IP Address", "192.0.2.1", "2.5"),

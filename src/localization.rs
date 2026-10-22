@@ -155,6 +155,17 @@ impl Localizer {
         out
     }
     pub fn message(&self, lang: &str, english: &str) -> String {
+        // Source diagnostics remain stable for exported evidence and older files.
+        let alias = match english {
+            "No verified current snapshot evidence" => Some("explanation.no_current"),
+            "Review explicit values and device compatibility. Packet Tracer execution support is untested for this suggestion. No commands have been executed." => {
+                Some("explanation.review_command")
+            }
+            _ => None,
+        };
+        if let Some(key) = alias {
+            return self.text(lang, key);
+        }
         self.packs["en"]
             .messages
             .iter()
@@ -197,6 +208,16 @@ mod tests {
                 placeholders(value),
                 placeholders(&vi.messages[key]),
                 "{key}"
+            );
+        }
+    }
+    #[test]
+    fn legacy_verification_copy_uses_current_bilingual_guidance() {
+        let localizer = Localizer::from_directory(None);
+        for language in ["en-US", "vi-VN"] {
+            assert_eq!(
+                localizer.message(language, "No verified current snapshot evidence"),
+                localizer.text(language, "explanation.no_current")
             );
         }
     }

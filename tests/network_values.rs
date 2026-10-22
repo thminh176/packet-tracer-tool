@@ -249,3 +249,108 @@ fn test_command_generation_for_normalized_checkpoints() {
     let cmd3 = pka_lab_inspector::commands::generate(&c3);
     assert!(!cmd3.supported);
 }
+
+#[test]
+fn rejects_ambiguous_networks_and_unvalidated_route_fields() {
+    for value in ["10.0.0.0", "10.0.0.0-8-junk", "10.0.0.0-8-1.1.1.1-0-1"] {
+        assert!(NormalizedNetwork::parse(value).is_none(), "{value}");
+    }
+    for value in [
+        "10.0.0.0-8-bad",
+        "10.0.0.0-8-1.1.1.1-9-1",
+        "10.0.0.0-8-1.1.1.1-0-bad",
+        "10.0.0.0-8-1.1.1.1-0-0",
+        "10.0.0.0-8-1.1.1.1-0-1-extra",
+        "10.0.0.0-8-1.1.1.1-0",
+        "10.0.0.0 255.0.0.0 1.1.1.1 bad",
+        "10.0.0.0 255.0.0.0 1.1.1.1 0",
+        "10.0.0.0 255.0.0.0 1.1.1.1 1 extra",
+        "10.0.0.0 255.0.0.0 Serial0//1",
+        "10.0.0.0 255.0.0.0 Serial0/",
+    ] {
+        assert!(ParsedStaticRoute::parse(value).is_err(), "{value}");
+    }
+    for value in [
+        "2001:db8::-64-bad",
+        "2001:db8::-64-2001:db8:1::1-1-1",
+        "2001:db8::-64-2001:db8:1::1-0-bad",
+        "2001:db8::-64-2001:db8:1::1-0-0",
+        "2001:db8::-64-2001:db8:1::1-0-1-extra",
+        "2001:db8::1-64-2001:db8:1::1",
+    ] {
+        assert!(ParsedIpv6StaticRoute::parse(value).is_none(), "{value}");
+    }
+    let link_local = ParsedIpv6StaticRoute::parse("2001:db8::-64-fe80::1").unwrap();
+    assert!(!link_local.is_complete);
+    assert!(link_local.to_cisco_command().is_none());
+}
+
+#[test]
+fn ospf_completeness_requires_valid_actual_process_and_area() {
+    let base = ParsedOspfNetwork::parse("10.0.0.0/8").unwrap();
+    let area_only = base.clone().with_area("0");
+    assert!(!area_only.is_complete);
+    assert_eq!(area_only.missing_fields, vec!["OSPF process ID"]);
+    assert!(area_only.to_cisco_command().is_none());
+    let invalid_process = area_only.with_process_id(0);
+    assert!(!invalid_process.is_complete);
+    let invalid_area = base.clone().with_process_id(10).with_area("0;reload");
+    assert!(!invalid_area.is_complete);
+    assert!(invalid_area.to_cisco_command().is_none());
+    let complete = base.with_process_id(10).with_area("0.0.0.0");
+    assert!(complete.is_complete);
+    assert!(complete.to_cisco_command().is_some());
+    for value in [
+        "1 10.0.0.0 0.0.0.255 nope",
+        "network 10.0.0.0 0.0.0.255 area 1x",
+        "1 10.0.0.0 0.0.0.255 0 trailing",
+    ] {
+        assert!(ParsedOspfNetwork::parse(value).is_err(), "{value}");
+    }
+}
+
+#[test]
+fn ipv6_cli_routes_require_exact_structure_and_link_local_scope() {
+    let route =
+        ParsedIpv6StaticRoute::parse("ipv6 route 2001:db8::/64 GigabitEthernet0/0 fe80::1 20")
+            .unwrap();
+    assert!(route.is_complete);
+    assert_eq!(
+        route.to_cisco_command().as_deref(),
+        Some("ipv6 route 2001:db8::/64 GigabitEthernet0/0 fe80::1 20")
+    );
+    for value in [
+        "2001:db8::/64 2001:db8:1::1 junk",
+        "2001:db8::/64 2001:db8:1::1 0",
+        "2001:db8::/64 2001:db8:1::1 1 trailing",
+        "2001:db8::/64 GigabitEthernet0/0 fe80::1 1 trailing",
+        "2001:db8::1/64 2001:db8:1::1",
+        "2001:db8::/64 Serial0.1/2",
+    ] {
+        assert!(ParsedIpv6StaticRoute::parse(value).is_none(), "{value}");
+    }
+    let incomplete = ParsedIpv6StaticRoute::parse("2001:db8::/64 fe80::1").unwrap();
+    assert!(!incomplete.is_complete);
+    assert!(incomplete.to_cisco_command().is_none());
+}
+
+#[test]
+fn static_route_next_hops_must_be_unicast() {
+    for route in [
+        "10.0.0.0-8-0.0.0.0",
+        "10.0.0.0-8-224.0.0.1",
+        "10.0.0.0 255.0.0.0 0.0.0.0",
+        "10.0.0.0 255.0.0.0 224.0.0.1",
+    ] {
+        assert!(ParsedStaticRoute::parse(route).is_err(), "{route}");
+    }
+    for route in [
+        "2001:db8::-64-::",
+        "2001:db8::-64-ff02::1",
+        "2001:db8::/64 ::",
+        "2001:db8::/64 ff02::1",
+        "2001:db8::/64 Gi0/0 ff02::1",
+    ] {
+        assert!(ParsedIpv6StaticRoute::parse(route).is_none(), "{route}");
+    }
+}

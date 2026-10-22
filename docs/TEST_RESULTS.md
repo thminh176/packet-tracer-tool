@@ -1,5 +1,25 @@
 # Verification and known limits
 
+## v0.2.0 final local candidate, 2026-10-23
+
+`cargo test --locked`: **199 passed, 0 failed, 1 explicitly opt-in real-file test ignored**. The vendored codec suite separately passes **18 tests** (217 total passing). Formatting and strict all-target Clippy pass. Conditional VLAN tests reject contradictory mode, active-VLAN and peer evidence, preserve Unverified status, and keep the typed library prerequisite workflow strict. Dot1Q takes its explicit VLAN requirement rather than a subinterface suffix.
+
+The x86_64 MSVC release builds successfully. A fresh Windows GUI launched with the original synthetic 126-checkpoint fixture, displayed 7 Passed / 7 Failed / 112 Unverified and 7/126 verified points, opened the full-height Command Library and switched Vietnamese/English. Copying the Library's synthetic `basic.hostname` script was read back from the native clipboard and matched exactly. [Screenshot](images/cisco-library-windows.png) shows only synthetic data. Automated tests cover filters, preferences, reports, source-preserving exports and both library layout sizes; the native Save dialog is not independently certified end to end.
+
+`cargo audit` reports **zero vulnerabilities**, with informational unmaintained-dependency advisories retained for review. `cargo deny --locked check licenses sources` passes. Local transcripts and private diagnostic output remain ignored. Historical test counts below describe earlier candidates.
+
+No Cisco command family has actual Packet Tracer device execution certification. The 32-file read-only copy review establishes decoding/extraction only; see [real-file evidence](REAL_FILE_REVIEW.md). No official grade or completed activity is claimed.
+
+The final routing correction was compared with v0.1.1 on the same permitted copy: ten OSPF leaves incorrectly overlapped static detection before, zero afterward. The rebuilt Windows GUI displayed OSPF badges and transferred an incomplete selected requirement to the Library, preserving the missing process ID and blocking executable-script copying. See [routing regression evidence](ROUTING_CLASSIFICATION_FIX.md). Private UI captures are excluded from distribution.
+
+## Local v0.2 review update
+
+The current local candidate passes **180 application tests**, with zero failures and one private opt-in test ignored, plus the codec's 18 tests. Formatting and strict all-target Clippy pass. This includes 17 independent public-API acceptance cases, 14 router cases, 15 switch cases, address-context regressions and two Library layout tests. See [real-file review](REAL_FILE_REVIEW.md) for the newly authorized 32-file collection and the identified 32/100/7 structural reference. These findings supersede older statements below that the reference had not been found.
+
+The Library collapse was corrected and tested headlessly at 960×600 and 1280×820 in English and Vietnamese. The Windows release executable launched, and the live synthetic Library showed a full-height list and parameter/detail panel. Device-command copying from the synthetic fixture was independently read back from the native Windows clipboard. No new family has Packet Tracer CLI execution certification. No v0.2 changes have been pushed or published.
+
+The sections below retain historical v0.1.x test evidence and limits; their counts describe those earlier builds.
+
 Test date: 2026-10-22. Target: Windows x86_64, Rust 1.99.1, native eframe/egui 0.33.3 OpenGL backend.
 
 ## Automated checks

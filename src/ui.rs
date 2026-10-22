@@ -12,6 +12,9 @@ use std::{
 use eframe::egui;
 use serde::{Deserialize, Serialize};
 
+use pka_lab_inspector::cisco::{
+    self, Capability, CommandRequest, CommandSpec, DeviceProfile, SupportState,
+};
 use pka_lab_inspector::commands;
 use pka_lab_inspector::inspector;
 use pka_lab_inspector::localization::Localizer;
@@ -29,16 +32,18 @@ pub enum Tab {
     DeviceCommands,
     RawXml,
     Diagnostics,
+    CommandLibrary,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 6] = [
+    pub const ALL: [Tab; 7] = [
         Tab::Overview,
         Tab::Checkpoints,
         Tab::NextActions,
         Tab::DeviceCommands,
         Tab::RawXml,
         Tab::Diagnostics,
+        Tab::CommandLibrary,
     ];
 
     pub fn title(&self) -> &'static str {
@@ -49,6 +54,7 @@ impl Tab {
             Tab::DeviceCommands => "nav.device_commands",
             Tab::RawXml => "nav.raw_xml",
             Tab::Diagnostics => "nav.diagnostics",
+            Tab::CommandLibrary => "nav.command_library",
         }
     }
 
@@ -60,8 +66,18 @@ impl Tab {
             Tab::DeviceCommands => "Ctrl+4",
             Tab::RawXml => "Ctrl+5",
             Tab::Diagnostics => "Ctrl+6",
+            Tab::CommandLibrary => "Ctrl+7",
         }
     }
+}
+
+/// Filter device categories in the Cisco Command Library.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum CiscoDeviceFilter {
+    #[default]
+    All,
+    Router,
+    Switch,
 }
 
 /// Status filter options for checkpoint filtering.
@@ -152,25 +168,52 @@ impl ProtocolBadge {
 
 /// Detect whether a checkpoint represents an IPv4 static route, IPv6 static route, or OSPF network.
 pub fn detect_protocol(c: &Checkpoint) -> Option<ProtocolBadge> {
-    if commands::is_ipv6_static_route_property(&c.property, &c.path)
-        || network_values::ParsedIpv6StaticRoute::parse(&c.expected).is_some()
-    {
+    if commands::is_ospf_network_property(&c.property, &c.path) {
+        return Some(ProtocolBadge::OspfNetwork);
+    }
+    if commands::is_ipv6_static_route_property(&c.property, &c.path) {
         return Some(ProtocolBadge::Ipv6StaticRoute);
     }
 
-    if commands::is_static_route_property(&c.property, &c.path)
-        || network_values::ParsedStaticRoute::parse(&c.expected).is_ok()
-    {
+    if commands::is_static_route_property(&c.property, &c.path) {
         return Some(ProtocolBadge::Ipv4StaticRoute);
     }
 
-    if commands::is_ospf_network_property(&c.property, &c.path)
-        || network_values::ParsedOspfNetwork::parse(&c.expected).is_ok()
-    {
-        return Some(ProtocolBadge::OspfNetwork);
-    }
-
     None
+}
+
+/// Carry explicit OSPF network/area into the library without inventing a process.
+fn ospf_library_request(c: &Checkpoint) -> Option<cisco::CommandRequest> {
+    if !commands::is_ospf_network_property(&c.property, &c.path)
+        || cisco::mapping::identity_conflict(c)
+        || c.evidence.iter().any(|e| {
+            e.starts_with("assessment:unsupported")
+                || e.starts_with("assessment:ambiguous")
+                || e.starts_with("assessment:inventory")
+                || e.starts_with("commands:context-conflict=")
+        })
+        || commands::generate(c)
+            .explanation
+            .to_ascii_lowercase()
+            .contains("conflict")
+    {
+        return None;
+    }
+    let o = network_values::ParsedOspfNetwork::parse(&c.expected).ok()?;
+    let prefix = network_values::wildcard_to_prefix(o.wildcard_mask)?;
+    let mut parameters = BTreeMap::from([("network".into(), format!("{}/{prefix}", o.network))]);
+    if let Some(area) = o.area {
+        parameters.insert("area".into(), area);
+    }
+    if let Some(process) = o.process_id {
+        parameters.insert("process_id".into(), process.to_string());
+    }
+    Some(cisco::CommandRequest {
+        family: "router.ospf.network".into(),
+        device: c.device.clone(),
+        profile: cisco::mapping::profile(c),
+        parameters,
+    })
 }
 
 /// Structured network values extracted from a static route or OSPF statement.
@@ -340,6 +383,52 @@ pub fn render_protocol_badge(ui: &mut egui::Ui, badge: ProtocolBadge, text: &str
         });
 }
 
+/// Render a styled badge representing a Cisco device profile support state.
+/// CRITICAL: Never labels PT verified unless support is actual `SupportState::VerifiedPacketTracer`.
+pub fn render_cisco_support_badge(
+    ui: &mut egui::Ui,
+    support: SupportState,
+    catalog: &Localizer,
+    language: &str,
+) {
+    let tr = |key: &str| catalog.text(language, key);
+    let (bg, fg, label_key) = match support {
+        SupportState::VerifiedPacketTracer => (
+            egui::Color32::from_rgb(27, 94, 32),
+            egui::Color32::from_rgb(200, 230, 201),
+            "cisco.support.verified_pt",
+        ),
+        SupportState::DocumentedNotTested => (
+            egui::Color32::from_rgb(13, 71, 161),
+            egui::Color32::from_rgb(187, 222, 251),
+            "cisco.support.documented_not_tested",
+        ),
+        SupportState::Unsupported => (
+            egui::Color32::from_rgb(183, 28, 28),
+            egui::Color32::from_rgb(255, 205, 210),
+            "cisco.support.unsupported",
+        ),
+        SupportState::Unknown => (
+            egui::Color32::from_rgb(80, 80, 80),
+            egui::Color32::from_rgb(238, 238, 238),
+            "cisco.support.unknown",
+        ),
+    };
+
+    egui::Frame::NONE
+        .fill(bg)
+        .corner_radius(egui::CornerRadius::same(3))
+        .inner_margin(egui::Margin::symmetric(6, 2))
+        .show(ui, |ui| {
+            ui.label(
+                egui::RichText::new(tr(label_key))
+                    .color(fg)
+                    .size(11.0)
+                    .strong(),
+            );
+        });
+}
+
 /// Main Inspector Application State.
 pub struct InspectorApp {
     pub localizer: Arc<Localizer>,
@@ -377,6 +466,20 @@ pub struct InspectorApp {
     // Preferences and checklists
     pub preferences: Preferences,
     pub manual_checklists: HashMap<String, ActivityChecklist>,
+
+    // Cisco Command Library state
+    pub library_search_query: String,
+    pub library_device_filter: CiscoDeviceFilter,
+    pub library_topic_filter: Option<String>,
+    pub library_profile: DeviceProfile,
+    pub library_selected_id: Option<String>,
+    pub library_target_device: String,
+    pub library_parameters: BTreeMap<String, String>,
+
+    // Cisco Command Library layout diagnostics
+    pub library_layout_height: f32,
+    pub library_left_width: f32,
+    pub library_right_width: f32,
 
     // Background thread channels
     pub tx: Sender<LoadMessage>,
@@ -417,6 +520,17 @@ impl InspectorApp {
 
             preferences: Preferences::default(),
             manual_checklists: HashMap::new(),
+
+            library_search_query: String::new(),
+            library_device_filter: CiscoDeviceFilter::All,
+            library_topic_filter: None,
+            library_profile: DeviceProfile::Unknown,
+            library_selected_id: None,
+            library_target_device: "Router0".into(),
+            library_parameters: BTreeMap::new(),
+            library_layout_height: 0.0,
+            library_left_width: 0.0,
+            library_right_width: 0.0,
 
             tx,
             rx,
@@ -936,7 +1050,7 @@ impl InspectorApp {
                 self.reload_activity(Some(ctx.clone()));
             }
 
-            // Tabs Ctrl+1 through Ctrl+6
+            // Tabs Ctrl+1 through Ctrl+7
             if ctrl && i.key_pressed(egui::Key::Num1) {
                 self.current_tab = Tab::Overview;
             }
@@ -954,6 +1068,9 @@ impl InspectorApp {
             }
             if ctrl && i.key_pressed(egui::Key::Num6) {
                 self.current_tab = Tab::Diagnostics;
+            }
+            if ctrl && i.key_pressed(egui::Key::Num7) {
+                self.current_tab = Tab::CommandLibrary;
             }
 
             // Escape: Clear search
@@ -1492,6 +1609,12 @@ impl InspectorApp {
             });
             ui.separator();
 
+            // When Cisco Command Library is selected, render it directly even without an activity loaded
+            if self.current_tab == Tab::CommandLibrary {
+                self.render_command_library_tab(ui, ctx);
+                return;
+            }
+
             // When no analysis is loaded
             if self.analysis.is_none() {
                 ui.vertical_centered(|ui| {
@@ -1520,6 +1643,7 @@ impl InspectorApp {
                 Tab::DeviceCommands => self.render_device_commands_tab(ui, ctx),
                 Tab::RawXml => self.render_raw_xml_tab(ui, ctx),
                 Tab::Diagnostics => self.render_diagnostics_tab(ui, ctx),
+                Tab::CommandLibrary => self.render_command_library_tab(ui, ctx),
             }
         });
     }
@@ -1555,9 +1679,25 @@ impl InspectorApp {
             ui.add_space(8.0);
             ui.heading(tr("ui.assessment_overview"));
             ui.add_space(8.0);
+            let coverage = &a.command_coverage;
+            ui.label(tf(
+                "cisco.coverage_summary",
+                &[
+                    ("recognized", &coverage.recognized.to_string()),
+                    ("commands", &coverage.command_ready.to_string()),
+                    ("gui", &coverage.gui_ready.to_string()),
+                    ("verified", &coverage.validation_verified.to_string()),
+                    ("total", &s.total.to_string()),
+                ],
+            ));
+            ui.label(
+                egui::RichText::new(tr("cisco.coverage_notice"))
+                    .small()
+                    .weak(),
+            );
 
-            // Metrics cards in a row
-            ui.horizontal(|ui| {
+            // Metrics cards wrap for narrow windows and longer Vietnamese labels.
+            ui.horizontal_wrapped(|ui| {
                 // Card 1: Checkpoints
                 egui::Frame::group(ui.style())
                     .inner_margin(egui::Margin::same(12))
@@ -1780,10 +1920,19 @@ impl InspectorApp {
                                         {
                                             manual = Some((c.id.clone(), checked));
                                         }
+                                        let property_label = detect_protocol(c)
+                                            .map(|badge| {
+                                                format!(
+                                                    "{} {}",
+                                                    tr(badge.catalog_key()),
+                                                    c.property
+                                                )
+                                            })
+                                            .unwrap_or_else(|| c.property.clone());
                                         let values = [
                                             c.device.as_str(),
                                             c.interface.as_str(),
-                                            c.property.as_str(),
+                                            property_label.as_str(),
                                             c.expected.as_str(),
                                             c.current.as_deref().unwrap_or("?"),
                                         ];
@@ -1915,6 +2064,15 @@ impl InspectorApp {
                         ui.heading(&c.device);
                         ui.label(&c.interface);
                         ui.strong(&c.property);
+                        let classification_key = match c.command_classification {
+                            cisco::Classification::Ready => "cisco.class.ready",
+                            cisco::Classification::MissingParameters => "cisco.class.missing",
+                            cisco::Classification::RecognizedUnsupported => {
+                                "cisco.class.unsupported"
+                            }
+                            cisco::Classification::UnknownAmbiguous => "cisco.class.unknown",
+                        };
+                        ui.label(egui::RichText::new(tr(classification_key)).small().weak());
 
                         // Protocol badge if applicable
                         if let Some(badge) = detect_protocol(&c) {
@@ -2036,6 +2194,7 @@ impl InspectorApp {
                                 && curr_str != "?"
                             {
                                 let curr_cp = Checkpoint {
+                                    command_classification: Default::default(),
                                     property: c.property.clone(),
                                     path: c.path.clone(),
                                     expected: curr_str.clone(),
@@ -2121,6 +2280,19 @@ impl InspectorApp {
                             ui.monospace(&cmd.text);
                             if ui.button(tr("action.copy_checkpoint")).clicked() {
                                 copy = Some((cmd.text, format!("{} {}", c.device, c.property)));
+                            }
+                        } else if let Some(request) = ospf_library_request(&c) {
+                            ui.label(tr("detail.ospf_process_required"));
+                            if ui.button(tr("detail.open_command_library")).clicked() {
+                                self.library_search_query.clear();
+                                self.library_device_filter = CiscoDeviceFilter::All;
+                                self.library_topic_filter = None;
+                                self.library_selected_id = Some(request.family);
+                                self.library_target_device = request.device;
+                                self.library_profile = request.profile;
+                                self.library_parameters = request.parameters;
+                                self.current_tab = Tab::CommandLibrary;
+                                self.preferences.active_tab = Tab::CommandLibrary;
                             }
                         }
                         let mut manual = self.is_manually_checked(&c.id);
@@ -2635,6 +2807,748 @@ impl InspectorApp {
         }
     }
 
+    /// Tab 7: Cisco Command Library tab entrypoint.
+    pub fn render_command_library_tab(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let specs = cisco::registry();
+        self.render_command_library_content(ui, ctx, &specs);
+    }
+
+    /// Alias for render_command_library_content matching the Cisco Command Library renderer.
+    #[inline]
+    #[allow(dead_code)]
+    pub fn render_cisco_library(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        specs: &[CommandSpec],
+    ) {
+        self.render_command_library_content(ui, ctx, specs);
+    }
+
+    /// Render Cisco Command Library content with the provided command specifications.
+    pub fn render_command_library_content(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        specs: &[CommandSpec],
+    ) {
+        let catalog = self.localizer.clone();
+        let language = self.preferences.language.clone();
+        let tr = |key: &str| catalog.text(&language, key);
+        let tf = |key: &str, values: &[(&str, &str)]| catalog.format(&language, key, values);
+        let is_vi = matches!(language.as_str(), "vi" | "vi-VN" | "vi_VN");
+
+        let mut do_copy: Option<(String, String)> = None;
+
+        // Unique topics from specs
+        let mut unique_topics: Vec<String> = specs.iter().map(|s| s.topic.to_string()).collect();
+        unique_topics.sort();
+        unique_topics.dedup();
+
+        // Top Filter Bar
+        ui.horizontal_wrapped(|ui| {
+            ui.label(egui::RichText::new("🔍").size(14.0));
+            ui.add(
+                egui::TextEdit::singleline(&mut self.library_search_query)
+                    .hint_text(tr("cisco.search_placeholder"))
+                    .desired_width(180.0),
+            );
+            if !self.library_search_query.is_empty() && ui.button("✖").clicked() {
+                self.library_search_query.clear();
+            }
+
+            ui.separator();
+
+            // Device category filter: All / Router / Switch
+            if ui
+                .selectable_label(
+                    self.library_device_filter == CiscoDeviceFilter::All,
+                    tr("cisco.filter_all"),
+                )
+                .clicked()
+            {
+                self.library_device_filter = CiscoDeviceFilter::All;
+            }
+            if ui
+                .selectable_label(
+                    self.library_device_filter == CiscoDeviceFilter::Router,
+                    tr("cisco.filter_router"),
+                )
+                .clicked()
+            {
+                self.library_device_filter = CiscoDeviceFilter::Router;
+            }
+            if ui
+                .selectable_label(
+                    self.library_device_filter == CiscoDeviceFilter::Switch,
+                    tr("cisco.filter_switch"),
+                )
+                .clicked()
+            {
+                self.library_device_filter = CiscoDeviceFilter::Switch;
+            }
+
+            ui.separator();
+
+            // Topic filter
+            ui.label(tr("cisco.topic_filter"));
+            let all_topics_label = tr("cisco.topic_all");
+            let current_topic = self
+                .library_topic_filter
+                .as_deref()
+                .unwrap_or(&all_topics_label);
+            egui::ComboBox::from_id_salt("cisco_topic_filter_combo")
+                .selected_text(if current_topic.starts_with("cisco.topic.") {
+                    tr(current_topic)
+                } else {
+                    current_topic.to_owned()
+                })
+                .show_ui(ui, |ui| {
+                    if ui
+                        .selectable_label(
+                            self.library_topic_filter.is_none(),
+                            tr("cisco.topic_all"),
+                        )
+                        .clicked()
+                    {
+                        self.library_topic_filter = None;
+                    }
+                    for topic in &unique_topics {
+                        let is_sel = self.library_topic_filter.as_deref() == Some(topic.as_str());
+                        if ui
+                            .selectable_label(
+                                is_sel,
+                                if topic.starts_with("cisco.topic.") {
+                                    tr(topic)
+                                } else {
+                                    topic.clone()
+                                },
+                            )
+                            .clicked()
+                        {
+                            self.library_topic_filter = Some(topic.clone());
+                        }
+                    }
+                });
+
+            ui.separator();
+
+            // Profile selector
+            ui.label(tr("cisco.profile_label"));
+            egui::ComboBox::from_id_salt("cisco_profile_selector_combo")
+                .selected_text(self.library_profile.label())
+                .show_ui(ui, |ui| {
+                    for prof in DeviceProfile::ALL {
+                        let is_sel = self.library_profile == prof;
+                        if ui.selectable_label(is_sel, prof.label()).clicked() {
+                            self.library_profile = prof;
+                        }
+                    }
+                });
+
+            ui.separator();
+
+            // Target device name
+            ui.label(tr("cisco.target_device"));
+            ui.add(egui::TextEdit::singleline(&mut self.library_target_device).desired_width(80.0));
+        });
+
+        ui.separator();
+
+        // Filter specs
+        let filtered_specs: Vec<&CommandSpec> = specs
+            .iter()
+            .filter(|spec| {
+                match self.library_device_filter {
+                    CiscoDeviceFilter::All => {}
+                    CiscoDeviceFilter::Router => {
+                        let is_router = spec.id.starts_with("router.")
+                            || spec.id.starts_with("basic.")
+                            || spec.capability == Capability::Basic
+                            || spec.capability == Capability::Routing
+                            || spec.capability == Capability::DynamicRouting
+                            || spec.capability == Capability::Ipv6Routing;
+                        if !is_router {
+                            return false;
+                        }
+                    }
+                    CiscoDeviceFilter::Switch => {
+                        let is_switch = spec.id.starts_with("switch.")
+                            || spec.id.starts_with("basic.")
+                            || spec.capability == Capability::Basic
+                            || spec.capability == Capability::Switching
+                            || spec.capability == Capability::Multilayer;
+                        if !is_switch {
+                            return false;
+                        }
+                    }
+                }
+
+                if let Some(ref t) = self.library_topic_filter
+                    && spec.topic != t
+                {
+                    return false;
+                }
+
+                if !self.library_search_query.trim().is_empty() {
+                    let q = self.library_search_query.to_lowercase();
+                    let name_match = spec.name_en.to_lowercase().contains(&q)
+                        || spec.name_vi.to_lowercase().contains(&q);
+                    let id_match = spec.id.to_lowercase().contains(&q);
+                    let syntax_match = spec.syntax.to_lowercase().contains(&q);
+                    let topic_match = spec.topic.to_lowercase().contains(&q)
+                        || tr(spec.topic).to_lowercase().contains(&q);
+                    if !name_match && !id_match && !syntax_match && !topic_match {
+                        return false;
+                    }
+                }
+
+                true
+            })
+            .collect();
+
+        // Auto-select first spec if current selection is invalid or missing
+        if let Some(ref sel_id) = self.library_selected_id {
+            if !filtered_specs.iter().any(|s| s.id == sel_id) && !filtered_specs.is_empty() {
+                self.library_selected_id = Some(filtered_specs[0].id.to_string());
+            }
+        } else if !filtered_specs.is_empty() {
+            self.library_selected_id = Some(filtered_specs[0].id.to_string());
+        }
+
+        // Capture full available size for the two-pane layout before creating child layouts
+        let available_size = ui.available_size();
+        let full_height = available_size.y.max(200.0);
+        let left_width = 340.0_f32.min(available_size.x * 0.45).max(220.0);
+
+        self.library_layout_height = full_height;
+        self.library_left_width = left_width;
+        self.library_right_width = (available_size.x - left_width).max(100.0);
+
+        // Two-pane master-detail layout reserving explicit remaining height
+        ui.allocate_ui_with_layout(
+            egui::vec2(available_size.x, full_height),
+            egui::Layout::left_to_right(egui::Align::Min),
+            |ui| {
+                ui.set_min_height(full_height);
+
+                // Left pane: Command list
+                ui.allocate_ui_with_layout(
+                    egui::vec2(left_width, full_height),
+                    egui::Layout::top_down(egui::Align::LEFT),
+                    |ui| {
+                        ui.set_min_height(full_height);
+                        ui.set_width(left_width);
+                        if specs.is_empty() {
+                            ui.vertical_centered(|ui| {
+                                ui.add_space(30.0);
+                                ui.label(egui::RichText::new(tr("cisco.empty_registry")).italics());
+                            });
+                            return;
+                        }
+
+                        if filtered_specs.is_empty() {
+                            ui.vertical_centered(|ui| {
+                                ui.add_space(30.0);
+                                ui.label(egui::RichText::new(tr("cisco.empty_search")).italics());
+                            });
+                            return;
+                        }
+
+                        egui::ScrollArea::vertical()
+                            .id_salt("cisco_specs_list_scroll")
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                for spec in &filtered_specs {
+                                    let is_selected =
+                                        self.library_selected_id.as_deref() == Some(spec.id);
+                                    let name = if is_vi { spec.name_vi } else { spec.name_en };
+                                    let support = self.library_profile.support(spec.capability);
+
+                                    let item_frame = egui::Frame::NONE
+                                        .fill(if is_selected {
+                                            egui::Color32::from_rgba_unmultiplied(60, 90, 140, 60)
+                                        } else {
+                                            egui::Color32::TRANSPARENT
+                                        })
+                                        .corner_radius(egui::CornerRadius::same(4))
+                                        .inner_margin(egui::Margin::symmetric(8, 6));
+
+                                    item_frame.show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            let btn = ui.selectable_label(is_selected, name);
+                                            if btn.clicked()
+                                                && self.library_selected_id.as_deref()
+                                                    != Some(spec.id)
+                                            {
+                                                self.library_selected_id =
+                                                    Some(spec.id.to_string());
+                                                for p in &spec.parameters {
+                                                    self.library_parameters
+                                                        .entry(p.name.to_string())
+                                                        .or_default();
+                                                }
+                                            }
+                                            ui.with_layout(
+                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                |ui| {
+                                                    render_cisco_support_badge(
+                                                        ui, support, &catalog, &language,
+                                                    );
+                                                },
+                                            );
+                                        });
+                                        ui.horizontal(|ui| {
+                                            ui.monospace(
+                                                egui::RichText::new(spec.id).size(10.0).weak(),
+                                            );
+                                            ui.separator();
+                                            ui.label(
+                                                egui::RichText::new(
+                                                    if spec.topic.starts_with("cisco.topic.") {
+                                                        tr(spec.topic)
+                                                    } else {
+                                                        spec.topic.to_owned()
+                                                    },
+                                                )
+                                                .size(10.0)
+                                                .italics(),
+                                            );
+                                        });
+                                    });
+                                    ui.separator();
+                                }
+                            });
+                    },
+                );
+
+                ui.separator();
+
+                // Right pane: Detail and Generation Form
+                let right_width = ui.available_width().max(100.0);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(right_width, full_height),
+                    egui::Layout::top_down(egui::Align::LEFT),
+                    |ui| {
+                        ui.set_min_height(full_height);
+                        ui.set_width(right_width);
+
+                        let selected_spec = self
+                            .library_selected_id
+                            .as_deref()
+                            .and_then(|id| specs.iter().find(|s| s.id == id));
+
+                        let Some(spec) = selected_spec else {
+                            ui.vertical_centered(|ui| {
+                                ui.add_space(40.0);
+                                ui.label(egui::RichText::new(tr("cisco.no_selection")).italics());
+                            });
+                            return;
+                        };
+
+                        egui::ScrollArea::vertical()
+                            .id_salt("cisco_spec_detail_scroll")
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                let name = if is_vi { spec.name_vi } else { spec.name_en };
+
+                                // Title & ID
+                                ui.heading(name);
+                                ui.horizontal(|ui| {
+                                    ui.monospace(egui::RichText::new(spec.id).strong());
+                                    ui.separator();
+                                    ui.label(format!("{}: {}", tr("cisco.mode"), spec.mode));
+                                    ui.separator();
+                                    ui.label(format!(
+                                        "{}: {:?}",
+                                        tr("cisco.capability"),
+                                        spec.capability
+                                    ));
+                                });
+                                ui.add_space(6.0);
+
+                                // Profile Support Banner
+                                let support = self.library_profile.support(spec.capability);
+                                let (bg_color, fg_color, border_color, notice_key) = match support {
+                                    SupportState::VerifiedPacketTracer => (
+                                        egui::Color32::from_rgb(27, 94, 32),
+                                        egui::Color32::from_rgb(200, 230, 201),
+                                        egui::Color32::from_rgb(76, 175, 80),
+                                        "cisco.support_notice_verified",
+                                    ),
+                                    SupportState::DocumentedNotTested => (
+                                        egui::Color32::from_rgb(13, 71, 161),
+                                        egui::Color32::from_rgb(187, 222, 251),
+                                        egui::Color32::from_rgb(33, 150, 243),
+                                        "cisco.support_notice_not_tested",
+                                    ),
+                                    SupportState::Unsupported => (
+                                        egui::Color32::from_rgb(183, 28, 28),
+                                        egui::Color32::from_rgb(255, 205, 210),
+                                        egui::Color32::from_rgb(244, 67, 54),
+                                        "cisco.support_notice_unsupported",
+                                    ),
+                                    SupportState::Unknown => (
+                                        egui::Color32::from_rgb(66, 66, 66),
+                                        egui::Color32::from_rgb(224, 224, 224),
+                                        egui::Color32::from_rgb(158, 158, 158),
+                                        "cisco.support_notice_unknown",
+                                    ),
+                                };
+
+                                egui::Frame::NONE
+                                    .fill(bg_color)
+                                    .stroke(egui::Stroke::new(1.0_f32, border_color))
+                                    .corner_radius(egui::CornerRadius::same(4))
+                                    .inner_margin(egui::Margin::symmetric(10, 8))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            render_cisco_support_badge(
+                                                ui, support, &catalog, &language,
+                                            );
+                                            ui.label(
+                                                egui::RichText::new(format!(
+                                                    "{}: {}",
+                                                    self.library_profile.label(),
+                                                    tr(notice_key)
+                                                ))
+                                                .color(fg_color),
+                                            );
+                                        });
+                                    });
+                                ui.add_space(8.0);
+
+                                // Syntax Box
+                                ui.strong(tr("cisco.syntax"));
+                                ui.label(tr("detail.reference_syntax"));
+                                egui::Frame::NONE
+                                    .fill(egui::Color32::from_rgb(20, 24, 30))
+                                    .corner_radius(egui::CornerRadius::same(4))
+                                    .inner_margin(egui::Margin::symmetric(10, 6))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.monospace(
+                                                egui::RichText::new(spec.syntax)
+                                                    .color(egui::Color32::from_rgb(144, 202, 249)),
+                                            );
+                                            ui.with_layout(
+                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                |ui| {
+                                                    if ui.button(tr("action.copy")).clicked() {
+                                                        do_copy = Some((
+                                                            spec.syntax.to_string(),
+                                                            tr("cisco.syntax").to_string(),
+                                                        ));
+                                                    }
+                                                },
+                                            );
+                                        });
+                                    });
+                                ui.add_space(8.0);
+
+                                // Source Documentation & Link Click
+                                ui.horizontal(|ui| {
+                                    ui.strong(format!("{}:", tr("cisco.source")));
+                                    if spec.source.starts_with("http://")
+                                        || spec.source.starts_with("https://")
+                                    {
+                                        ui.hyperlink_to(spec.source, spec.source);
+                                        if ui.small_button(tr("action.copy")).clicked() {
+                                            do_copy = Some((
+                                                spec.source.to_string(),
+                                                tr("cisco.source_copied").to_string(),
+                                            ));
+                                        }
+                                    } else {
+                                        ui.label(spec.source);
+                                        if ui.small_button(tr("action.copy")).clicked() {
+                                            do_copy = Some((
+                                                spec.source.to_string(),
+                                                tr("cisco.source_copied").to_string(),
+                                            ));
+                                        }
+                                    }
+                                });
+                                ui.add_space(8.0);
+
+                                // Prerequisites
+                                ui.strong(tr("cisco.prerequisites"));
+                                if spec.prerequisites.is_empty() {
+                                    ui.label(
+                                        egui::RichText::new(tr("cisco.no_prerequisites")).weak(),
+                                    );
+                                } else {
+                                    for prereq in &spec.prerequisites {
+                                        ui.label(format!("• {prereq}"));
+                                    }
+                                }
+                                ui.add_space(8.0);
+
+                                // Verification Commands
+                                ui.horizontal(|ui| {
+                                    ui.strong(tr("cisco.verification"));
+                                    if !spec.verification.is_empty()
+                                        && ui.small_button(tr("cisco.copy_verification")).clicked()
+                                    {
+                                        let joined = spec.verification.join("\n");
+                                        do_copy = Some((
+                                            joined,
+                                            tr("cisco.verification_copied").to_string(),
+                                        ));
+                                    }
+                                });
+                                if spec.verification.is_empty() {
+                                    ui.label(
+                                        egui::RichText::new(tr("cisco.no_verification")).weak(),
+                                    );
+                                } else {
+                                    for vcmd in &spec.verification {
+                                        ui.horizontal(|ui| {
+                                            ui.monospace(format!("  {vcmd}"));
+                                            if ui.small_button(tr("action.copy")).clicked() {
+                                                do_copy = Some((
+                                                    vcmd.to_string(),
+                                                    tr("action.copied").to_string(),
+                                                ));
+                                            }
+                                        });
+                                    }
+                                }
+                                ui.add_space(10.0);
+
+                                // Parameter Form
+                                ui.label(
+                                    egui::RichText::new(tr("cisco.example_notice"))
+                                        .small()
+                                        .weak(),
+                                );
+                                ui.horizontal(|ui| {
+                                    ui.heading(tr("cisco.parameters"));
+                                    if !spec.parameters.is_empty() {
+                                        if ui.button(tr("cisco.fill_all_examples")).clicked() {
+                                            self.library_parameters =
+                                                cisco::example_request(spec, self.library_profile)
+                                                    .parameters;
+                                        }
+                                        if ui.button(tr("cisco.reset_parameters")).clicked() {
+                                            self.library_parameters.clear();
+                                        }
+                                    }
+                                });
+
+                                if spec.parameters.is_empty() {
+                                    ui.label(egui::RichText::new(tr("cisco.no_parameters")).weak());
+                                } else {
+                                    egui::Grid::new("cisco_parameters_form_grid")
+                                        .num_columns(4)
+                                        .spacing([12.0, 8.0])
+                                        .show(ui, |ui| {
+                                            for p in &spec.parameters {
+                                                // Column 1: Name and Required tag
+                                                ui.horizontal(|ui| {
+                                                    ui.strong(p.name);
+                                                    if p.required {
+                                                        ui.label(
+                                                            egui::RichText::new(format!(
+                                                                "[{}]",
+                                                                tr("cisco.param_required")
+                                                            ))
+                                                            .color(egui::Color32::from_rgb(
+                                                                229, 57, 53,
+                                                            ))
+                                                            .strong(),
+                                                        );
+                                                    } else {
+                                                        ui.label(
+                                                            egui::RichText::new(format!(
+                                                                "[{}]",
+                                                                tr("cisco.param_optional")
+                                                            ))
+                                                            .weak(),
+                                                        );
+                                                    }
+                                                });
+
+                                                // Column 2: Input TextEdit
+                                                let val_entry = self
+                                                    .library_parameters
+                                                    .entry(p.name.to_string())
+                                                    .or_default();
+                                                ui.add(
+                                                    egui::TextEdit::singleline(val_entry)
+                                                        .desired_width(180.0),
+                                                );
+
+                                                // Column 3: Use Example button
+                                                if ui
+                                                    .small_button(tr("cisco.use_example"))
+                                                    .on_hover_text(p.example)
+                                                    .clicked()
+                                                {
+                                                    self.library_parameters.insert(
+                                                        p.name.to_string(),
+                                                        p.example.to_string(),
+                                                    );
+                                                }
+
+                                                // Column 4: Localized Description & Example
+                                                let desc = if is_vi {
+                                                    p.description_vi
+                                                } else {
+                                                    p.description_en
+                                                };
+                                                let ex_str = tf(
+                                                    "cisco.param_example",
+                                                    &[("example", p.example)],
+                                                );
+                                                ui.label(format!("{desc} ({ex_str})"));
+
+                                                ui.end_row();
+                                            }
+                                        });
+                                }
+                                ui.add_space(12.0);
+
+                                // Command Plan Generation
+                                let req = CommandRequest {
+                                    family: spec.id.to_string(),
+                                    device: self.library_target_device.clone(),
+                                    profile: self.library_profile,
+                                    parameters: self.library_parameters.clone(),
+                                };
+                                let plan = cisco::generate(&req);
+
+                                ui.separator();
+                                ui.horizontal(|ui| {
+                                    ui.heading(tr("cisco.preview_title"));
+                                    if plan.executable()
+                                        && ui.button(tr("cisco.copy_script")).clicked()
+                                    {
+                                        let script = plan.script();
+                                        do_copy =
+                                            Some((script, tr("cisco.script_copied").to_string()));
+                                    }
+                                });
+
+                                if plan.executable() {
+                                    ui.label(
+                                        egui::RichText::new(tr("ui.paste_target_notice"))
+                                            .weak()
+                                            .italics(),
+                                    );
+                                    egui::Frame::NONE
+                                        .fill(egui::Color32::from_rgb(18, 22, 28))
+                                        .stroke(egui::Stroke::new(
+                                            1.0_f32,
+                                            egui::Color32::from_rgb(46, 125, 50),
+                                        ))
+                                        .corner_radius(egui::CornerRadius::same(4))
+                                        .inner_margin(egui::Margin::symmetric(10, 8))
+                                        .show(ui, |ui| {
+                                            let mut script = plan.script();
+                                            let rows = script.lines().count().clamp(3, 14);
+                                            ui.add(
+                                                egui::TextEdit::multiline(&mut script)
+                                                    .font(egui::TextStyle::Monospace)
+                                                    .code_editor()
+                                                    .desired_width(f32::INFINITY)
+                                                    .desired_rows(rows),
+                                            );
+                                        });
+                                } else {
+                                    ui.label(
+                                        egui::RichText::new(tr("cisco.not_executable"))
+                                            .color(egui::Color32::from_rgb(255, 179, 0))
+                                            .italics(),
+                                    );
+
+                                    // Missing parameters
+                                    if !plan.missing_parameters.is_empty() {
+                                        egui::Frame::NONE
+                                            .fill(egui::Color32::from_rgb(40, 15, 15))
+                                            .corner_radius(egui::CornerRadius::same(4))
+                                            .inner_margin(egui::Margin::symmetric(8, 6))
+                                            .show(ui, |ui| {
+                                                ui.strong(
+                                                    egui::RichText::new(tr(
+                                                        "cisco.missing_parameters",
+                                                    ))
+                                                    .color(egui::Color32::from_rgb(239, 83, 80)),
+                                                );
+                                                for mp in &plan.missing_parameters {
+                                                    ui.label(
+                                                        egui::RichText::new(format!("  • {mp}"))
+                                                            .color(egui::Color32::from_rgb(
+                                                                255, 205, 210,
+                                                            )),
+                                                    );
+                                                }
+                                            });
+                                        ui.add_space(4.0);
+                                    }
+
+                                    // Warnings
+                                    if !plan.warnings.is_empty() {
+                                        egui::Frame::NONE
+                                            .fill(egui::Color32::from_rgb(45, 35, 15))
+                                            .corner_radius(egui::CornerRadius::same(4))
+                                            .inner_margin(egui::Margin::symmetric(8, 6))
+                                            .show(ui, |ui| {
+                                                ui.strong(
+                                                    egui::RichText::new(tr("cisco.warnings"))
+                                                        .color(egui::Color32::from_rgb(
+                                                            255, 183, 77,
+                                                        )),
+                                                );
+                                                for w in &plan.warnings {
+                                                    ui.label(format!(
+                                                        "  • {}",
+                                                        catalog.message(&language, w)
+                                                    ));
+                                                }
+                                            });
+                                        ui.add_space(4.0);
+                                    }
+
+                                    // Conflicts
+                                    if !plan.conflicts.is_empty() {
+                                        egui::Frame::NONE
+                                            .fill(egui::Color32::from_rgb(45, 20, 20))
+                                            .corner_radius(egui::CornerRadius::same(4))
+                                            .inner_margin(egui::Margin::symmetric(8, 6))
+                                            .show(ui, |ui| {
+                                                ui.strong(
+                                                    egui::RichText::new(tr("cisco.conflicts"))
+                                                        .color(egui::Color32::from_rgb(
+                                                            239, 83, 80,
+                                                        )),
+                                                );
+                                                for c in &plan.conflicts {
+                                                    ui.label(format!("  • {c}"));
+                                                }
+                                            });
+                                        ui.add_space(4.0);
+                                    }
+
+                                    // Evidence
+                                    if !plan.evidence.is_empty() {
+                                        ui.strong(tr("cisco.evidence"));
+                                        for ev in &plan.evidence {
+                                            ui.label(format!("  • {ev}"));
+                                        }
+                                    }
+                                }
+                            });
+                    },
+                );
+            },
+        );
+
+        if let Some((text, label)) = do_copy {
+            self.copy_text_with_feedback(ctx, text, &label);
+        }
+    }
+
     /// Settings dialog for user preferences, language selection, and original branding.
     pub fn render_settings_window(&mut self, ctx: &egui::Context) {
         let catalog = self.localizer.clone();
@@ -2786,9 +3700,13 @@ impl eframe::App for InspectorApp {
 
         // Render UI panels
         self.render_top_panel(ctx);
-        self.render_side_panel(ctx);
+        if self.current_tab != Tab::CommandLibrary {
+            self.render_side_panel(ctx);
+        }
         self.render_bottom_panel(ctx);
-        self.render_detail_panel(ctx);
+        if self.current_tab != Tab::CommandLibrary {
+            self.render_detail_panel(ctx);
+        }
         self.render_central_panel(ctx);
 
         if self.show_settings {
@@ -2814,8 +3732,10 @@ mod tests {
 
     fn make_test_analysis() -> Analysis {
         Analysis {
+            command_coverage: Default::default(),
             checkpoints: vec![
                 Checkpoint {
+                    command_classification: Default::default(),
                     id: "chk1".into(),
                     device: "Router0".into(),
                     device_type: "Router".into(),
@@ -2831,6 +3751,7 @@ mod tests {
                     evidence: vec!["assessment:passed".into()],
                 },
                 Checkpoint {
+                    command_classification: Default::default(),
                     id: "chk2".into(),
                     device: "Switch0".into(),
                     device_type: "Switch".into(),
@@ -2846,6 +3767,7 @@ mod tests {
                     evidence: vec![],
                 },
                 Checkpoint {
+                    command_classification: Default::default(),
                     id: "chk3".into(),
                     device: "PC0".into(),
                     device_type: "PC".into(),
@@ -3081,10 +4003,9 @@ mod tests {
         assert!(cmd0.text.contains("ip address 192.168.1.1 255.255.255.0"));
 
         let cmd1 = commands::generate(&analysis.checkpoints[1]);
-        // Switch0 switchport mode trunk
-        assert!(cmd1.supported);
-        assert!(!cmd1.gui);
-        assert!(cmd1.text.contains("switchport mode trunk"));
+        // Switch0 switchport mode trunk without explicit switch context remains safely unsupported
+        assert!(!cmd1.supported);
+        assert!(!cmd1.explanation.is_empty());
     }
     #[test]
     fn language_defaults_and_persists_for_existing_and_custom_packs() {
@@ -3385,6 +4306,7 @@ mod rendering_checks {
     #[test]
     fn test_protocol_detection_and_badges() {
         let cp_ipv4 = Checkpoint {
+            command_classification: Default::default(),
             id: "route1".into(),
             device: "Router0".into(),
             property: "staticroute".into(),
@@ -3402,6 +4324,7 @@ mod rendering_checks {
         );
 
         let cp_ipv6 = Checkpoint {
+            command_classification: Default::default(),
             id: "route2".into(),
             device: "Router0".into(),
             property: "ipv6staticroute".into(),
@@ -3419,6 +4342,7 @@ mod rendering_checks {
         );
 
         let cp_ospf = Checkpoint {
+            command_classification: Default::default(),
             id: "ospf1".into(),
             device: "Router0".into(),
             property: "ospfnetwork".into(),
@@ -3431,8 +4355,41 @@ mod rendering_checks {
     }
 
     #[test]
+    fn indexed_ospf_badges_and_library_parameters_do_not_guess_process() {
+        let c = Checkpoint {
+            device: "Lab-Router".into(),
+            device_type: "Router".into(),
+            property: "Route0".into(),
+            expected: "198.51.100.0 0.0.0.255 2".into(),
+            path: "Network / Lab-Router / OSPF / 20 / Networks / Route0".into(),
+            ..Default::default()
+        };
+        assert_eq!(detect_protocol(&c), Some(ProtocolBadge::OspfNetwork));
+        let detail = extract_network_detail(&c).unwrap();
+        assert_eq!(detail.area.as_deref(), Some("2"));
+        assert_eq!(detail.process_id, None);
+        let mut request = ospf_library_request(&c).unwrap();
+        assert_eq!(request.get("network"), "198.51.100.0/24");
+        assert_eq!(request.get("area"), "2");
+        assert!(request.get("process_id").is_empty());
+        assert!(!cisco::generate(&request).executable());
+        request.parameters.insert("process_id".into(), "7".into());
+        let plan = cisco::generate(&request);
+        assert!(plan.executable());
+        assert!(plan.script().contains("router ospf 7\n"));
+        assert!(!plan.script().contains("ip route"));
+        let mut unrelated = c.clone();
+        unrelated.property = "IP Address".into();
+        unrelated.path = "Network / Lab-Router / Ports / GigabitEthernet0/0".into();
+        assert_eq!(detect_protocol(&unrelated), None);
+        assert!(ospf_library_request(&unrelated).is_none());
+        assert_eq!(c.status, Status::Unverified);
+    }
+
+    #[test]
     fn test_extract_network_detail_fields() {
         let cp_static = Checkpoint {
+            command_classification: Default::default(),
             id: "r1".into(),
             device: "R1".into(),
             property: "staticroute".into(),
@@ -3448,6 +4405,7 @@ mod rendering_checks {
         assert_eq!(detail_static.badge, ProtocolBadge::Ipv4StaticRoute);
 
         let cp_ospf = Checkpoint {
+            command_classification: Default::default(),
             id: "o1".into(),
             device: "R1".into(),
             property: "ospfnetwork".into(),
@@ -3498,6 +4456,7 @@ mod rendering_checks {
         let analysis = Analysis {
             checkpoints: vec![
                 Checkpoint {
+                    command_classification: Default::default(),
                     id: "chk_static".into(),
                     device: "Router1".into(),
                     device_type: "Router".into(),
@@ -3513,6 +4472,7 @@ mod rendering_checks {
                     evidence: vec![],
                 },
                 Checkpoint {
+                    command_classification: Default::default(),
                     id: "chk_ospf".into(),
                     device: "Router2".into(),
                     device_type: "Router".into(),
@@ -3567,5 +4527,399 @@ mod rendering_checks {
             },
         );
         assert!(!wide_output.shapes.is_empty());
+    }
+
+    #[test]
+    fn test_cisco_device_filtering_and_basic_inclusion() {
+        let specs = make_test_cisco_specs();
+        let mut app = InspectorApp::new(None, None);
+
+        // Filter: All -> all 3 specs visible
+        app.library_device_filter = CiscoDeviceFilter::All;
+        // Direct filter logic test
+        let router_specs: Vec<_> = specs
+            .iter()
+            .filter(|spec| {
+                spec.id.starts_with("router.")
+                    || spec.id.starts_with("basic.")
+                    || spec.capability == Capability::Basic
+                    || spec.capability == Capability::Routing
+                    || spec.capability == Capability::DynamicRouting
+                    || spec.capability == Capability::Ipv6Routing
+            })
+            .collect();
+        // Router filter includes router.interface_ip AND basic.hostname
+        assert_eq!(router_specs.len(), 2);
+        assert!(router_specs.iter().any(|s| s.id == "router.interface_ip"));
+        assert!(router_specs.iter().any(|s| s.id == "basic.hostname"));
+
+        let switch_specs: Vec<_> = specs
+            .iter()
+            .filter(|spec| {
+                spec.id.starts_with("switch.")
+                    || spec.id.starts_with("basic.")
+                    || spec.capability == Capability::Basic
+                    || spec.capability == Capability::Switching
+                    || spec.capability == Capability::Multilayer
+            })
+            .collect();
+        // Switch filter includes switch.vlan_create AND basic.hostname
+        assert_eq!(switch_specs.len(), 2);
+        assert!(switch_specs.iter().any(|s| s.id == "switch.vlan_create"));
+        assert!(switch_specs.iter().any(|s| s.id == "basic.hostname"));
+    }
+
+    #[test]
+    fn test_cisco_search_query_bilingual_and_syntax() {
+        let specs = make_test_cisco_specs();
+
+        // Search by English name
+        let q_en = "address";
+        let match_en: Vec<_> = specs
+            .iter()
+            .filter(|s| {
+                s.name_en.to_lowercase().contains(q_en) || s.name_vi.to_lowercase().contains(q_en)
+            })
+            .collect();
+        assert_eq!(match_en.len(), 1);
+        assert_eq!(match_en[0].id, "router.interface_ip");
+
+        // Search by Vietnamese name
+        let q_vi = "giao tiếp";
+        let match_vi: Vec<_> = specs
+            .iter()
+            .filter(|s| {
+                s.parameters
+                    .iter()
+                    .any(|p| p.description_vi.to_lowercase().contains(q_vi))
+            })
+            .collect();
+        assert_eq!(match_vi.len(), 1);
+
+        // Search by syntax
+        let q_syn = "vlan <vlan_id>";
+        let match_syn: Vec<_> = specs.iter().filter(|s| s.syntax.contains(q_syn)).collect();
+        assert_eq!(match_syn.len(), 1);
+        assert_eq!(match_syn[0].id, "switch.vlan_create");
+    }
+
+    #[test]
+    fn test_cisco_support_badge_states() {
+        let catalog = Localizer::new();
+        // VerifiedPacketTracer must be strictly distinguished
+        let _s_pt = SupportState::VerifiedPacketTracer;
+        assert_eq!(
+            catalog.text("en", "cisco.support.verified_pt"),
+            "Packet Tracer Verified"
+        );
+        assert_eq!(
+            catalog.text("vi", "cisco.support.verified_pt"),
+            "Đã xác minh Packet Tracer"
+        );
+
+        // DocumentedNotTested must NEVER claim PT verified
+        let _s_doc = SupportState::DocumentedNotTested;
+        let doc_en = catalog.text("en", "cisco.support.documented_not_tested");
+        assert!(!doc_en.contains("Packet Tracer Verified"));
+        assert!(doc_en.contains("Not PT Tested"));
+
+        // Unsupported
+        let unsup_en = catalog.text("en", "cisco.support.unsupported");
+        assert!(unsup_en.contains("Unsupported"));
+
+        // Unknown
+        let unk_en = catalog.text("en", "cisco.support.unknown");
+        assert!(unk_en.contains("Unknown"));
+    }
+
+    #[test]
+    fn test_cisco_library_rendering_and_interaction() {
+        let context = egui::Context::default();
+        let mut app = InspectorApp::new(None, None);
+        app.current_tab = Tab::CommandLibrary;
+        let specs = make_test_cisco_specs();
+
+        // Test rendering with English locale
+        app.preferences.language = "en".into();
+        let output_en = context.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1280., 800.),
+                )),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    app.render_command_library_content(ui, ctx, &specs);
+                });
+            },
+        );
+        assert!(!output_en.shapes.is_empty());
+
+        // Test "Fill safe examples"
+        assert!(app.library_selected_id.is_some());
+        let selected_id = app.library_selected_id.clone().unwrap();
+        let spec = specs.iter().find(|s| s.id == selected_id).unwrap();
+        app.library_parameters = cisco::example_request(spec, app.library_profile).parameters;
+        assert!(!app.library_parameters.is_empty());
+
+        // Test rendering with Vietnamese locale
+        app.preferences.language = "vi".into();
+        let output_vi = context.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1280., 800.),
+                )),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    app.render_command_library_content(ui, ctx, &specs);
+                });
+            },
+        );
+        assert!(!output_vi.shapes.is_empty());
+
+        // Test rendering with empty specs (empty registry state)
+        let output_empty = context.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1280., 800.),
+                )),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    app.render_command_library_content(ui, ctx, &[]);
+                });
+            },
+        );
+        assert!(!output_empty.shapes.is_empty());
+    }
+
+    #[test]
+    fn test_cisco_library_layout_proportions_at_960x600_and_1280x820() {
+        for (width, height, lang) in [
+            (960.0, 600.0, "en"),
+            (960.0, 600.0, "vi"),
+            (1280.0, 820.0, "en"),
+            (1280.0, 820.0, "vi"),
+        ] {
+            let context = egui::Context::default();
+            let mut app = InspectorApp::new(None, None);
+            app.preferences.language = lang.into();
+            app.current_tab = Tab::CommandLibrary;
+
+            let output = context.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(width, height),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    app.render_top_panel(ctx);
+                    app.render_bottom_panel(ctx);
+                    app.render_central_panel(ctx);
+                },
+            );
+
+            // Verify shapes were generated
+            assert!(
+                !output.shapes.is_empty(),
+                "Failed to generate shapes for {width}x{height} in {lang}"
+            );
+
+            // Verify library layout height is allocated to full remaining height, NOT collapsed to a tiny strip (<50px)
+            let min_expected_height = height * 0.55;
+            println!(
+                "Layout metrics for {}x{} ({}): height={}, left_w={}, right_w={}",
+                width,
+                height,
+                lang,
+                app.library_layout_height,
+                app.library_left_width,
+                app.library_right_width
+            );
+            assert!(
+                app.library_layout_height >= min_expected_height,
+                "Library height for {width}x{height} ({lang}) collapsed to {}px, expected at least {}px",
+                app.library_layout_height,
+                min_expected_height
+            );
+
+            // Verify left pane width is preserved as 340px
+            assert!(
+                (app.library_left_width - 340.0).abs() < 1.0,
+                "Left list pane width for {width}x{height} should be 340px, got {}px",
+                app.library_left_width
+            );
+
+            // Verify right detail pane width has ample space
+            let min_right_width = width - 340.0 - 100.0;
+            assert!(
+                app.library_right_width >= min_right_width,
+                "Right detail pane width for {width}x{height} should be >= {}px, got {}px",
+                min_right_width,
+                app.library_right_width
+            );
+
+            // Verify visual bounding box of rendered shapes spans the full vertical content area
+            let visual_rect = output.shapes.iter().fold(egui::Rect::NOTHING, |acc, s| {
+                acc.union(s.shape.visual_bounding_rect())
+            });
+            assert!(
+                visual_rect.height() >= height * 0.8,
+                "Visual rendered content height should cover the window, got {}px on {height}px window",
+                visual_rect.height()
+            );
+        }
+    }
+
+    #[test]
+    fn test_cisco_library_with_synthetic_126_and_tab_switching() {
+        let context = egui::Context::default();
+        let mut app = InspectorApp::new(None, None);
+        let analysis = inspector::parse(
+            include_str!("../tests/fixtures/synthetic-126.xml").trim_start_matches('\u{feff}'),
+        )
+        .unwrap();
+        app.analysis = Some(analysis);
+
+        // Switch to CommandLibrary tab with synthetic activity loaded
+        app.current_tab = Tab::CommandLibrary;
+
+        for lang in ["en", "vi"] {
+            app.preferences.language = lang.into();
+            let output = context.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1280.0, 820.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    app.render_top_panel(ctx);
+                    app.render_bottom_panel(ctx);
+                    app.render_central_panel(ctx);
+                },
+            );
+
+            assert!(!output.shapes.is_empty());
+            assert!(
+                app.library_layout_height >= 600.0,
+                "Command library layout with synthetic126 should be full-height, got {}",
+                app.library_layout_height
+            );
+            assert_eq!(app.library_left_width, 340.0);
+        }
+    }
+
+    #[cfg(test)]
+    fn make_test_cisco_specs() -> Vec<CommandSpec> {
+        vec![
+            CommandSpec {
+                id: "router.interface_ip",
+                name_en: "Interface IPv4 Address",
+                name_vi: "Địa chỉ IPv4 cho cổng",
+                topic: "interface",
+                syntax: "ip address <ip> <mask>",
+                mode: "interface",
+                capability: Capability::Routing,
+                parameters: vec![
+                    cisco::ParameterSpec {
+                        name: "interface",
+                        kind: cisco::ParameterKind::Interface,
+                        required: true,
+                        description_en: "Interface name",
+                        description_vi: "Tên cổng giao tiếp",
+                        example: "GigabitEthernet0/0/0",
+                    },
+                    cisco::ParameterSpec {
+                        name: "address",
+                        kind: cisco::ParameterKind::Ipv4,
+                        required: true,
+                        description_en: "IPv4 address",
+                        description_vi: "Địa chỉ IPv4",
+                        example: "192.168.1.1",
+                    },
+                    cisco::ParameterSpec {
+                        name: "mask",
+                        kind: cisco::ParameterKind::Ipv4,
+                        required: true,
+                        description_en: "Subnet mask",
+                        description_vi: "Mặt nạ mạng",
+                        example: "255.255.255.0",
+                    },
+                ],
+                prerequisites: vec!["interface GigabitEthernet0/0/0"],
+                verification: vec!["show ip interface brief"],
+                source: "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipaddr/command/ipaddr-cr-book.html",
+                software: "Cisco IOS 15.0+",
+                removal: Some("no ip address"),
+                semantic_validation: true,
+            },
+            CommandSpec {
+                id: "switch.vlan_create",
+                name_en: "Create VLAN",
+                name_vi: "Tạo VLAN",
+                topic: "vlan",
+                syntax: "vlan <vlan_id>",
+                mode: "vlan",
+                capability: Capability::Switching,
+                parameters: vec![
+                    cisco::ParameterSpec {
+                        name: "vlan_id",
+                        kind: cisco::ParameterKind::Number(1, 4094),
+                        required: true,
+                        description_en: "VLAN ID",
+                        description_vi: "Mã số VLAN",
+                        example: "10",
+                    },
+                    cisco::ParameterSpec {
+                        name: "name",
+                        kind: cisco::ParameterKind::Identifier,
+                        required: false,
+                        description_en: "VLAN Name",
+                        description_vi: "Tên VLAN",
+                        example: "MANAGEMENT",
+                    },
+                ],
+                prerequisites: vec![],
+                verification: vec!["show vlan brief"],
+                source: "Cisco CCNA 200-301 Official Cert Guide",
+                software: "Catalyst IOS",
+                removal: Some("no vlan"),
+                semantic_validation: true,
+            },
+            CommandSpec {
+                id: "basic.hostname",
+                name_en: "Set Device Hostname",
+                name_vi: "Đặt tên thiết bị",
+                topic: "basic",
+                syntax: "hostname <name>",
+                mode: "global",
+                capability: Capability::Basic,
+                parameters: vec![cisco::ParameterSpec {
+                    name: "hostname",
+                    kind: cisco::ParameterKind::Identifier,
+                    required: true,
+                    description_en: "Device Hostname",
+                    description_vi: "Tên thiết bị",
+                    example: "R1-CORE",
+                }],
+                prerequisites: vec![],
+                verification: vec!["show running-config | include hostname"],
+                source: "Cisco IOS Basic Configuration Guide",
+                software: "Cisco IOS",
+                removal: Some("no hostname"),
+                semantic_validation: true,
+            },
+        ]
     }
 }

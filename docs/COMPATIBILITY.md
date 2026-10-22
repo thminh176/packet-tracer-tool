@@ -1,5 +1,15 @@
 # Compatibility
 
+## v0.2.0 candidate
+
+The offline decoder retains the v0.1.1 format scope. The new registry documents 46 bounded families and five device profiles; **zero families have execution certification on actual Packet Tracer devices**. Cisco platform documentation is not simulator certification. See [coverage](CISCO_COMMAND_COVERAGE.md), [device profiles](CISCO_DEVICE_COMPATIBILITY.md) and [PT matrix](PT_COMMAND_COMPATIBILITY_MATRIX.md).
+
+Current snapshots and device/config ownership must be unique before route absence can fail a checkpoint. Missing OSPF process/area, ambiguous prefixes, unvalidated trailing fields and opaque configuration remain Unverified/unsupported. Explicit saved scalar switch fields have conservative validators; full VLAN/STP forwarding and protocol convergence remain unsupported.
+
+Conditional Access/Native/Allowed VLAN assignments and VLAN naming may be suggested from complete explicit requirements without observing current port mode or VLAN activity. Such suggestions do not change mode or prove operational effect. Explicit contradictory metadata is rejected. The separate typed library workflow still requires its documented prerequisites.
+
+The sections below record historical decoder/feature scope and v0.1.1 behavior. v0.2.0 safety constraints above take precedence.
+
 Version 0.1.1 is an independent read-only lab inspector, not Cisco's grading engine. It supports the modern authenticated container decoded by MIT pktfile 0.2.2 with a local bounded-decompression patch. Unsupported/legacy containers fail with a diagnostic.
 
 Real evidence: all six PKA samples bundled with an installed Packet Tracer 9.0.1 decoded/parsed; a private user-owned duplicate also loaded in the GUI. No activity files, courseware, decoded XML or private expected configuration is distributed. Counts are candidate tree selections based on an inferred Qt-like `checkType` mapping, not certified native assessment grades. The known 32-checkpoint/100-point/7-device baseline and a real 126-checkpoint activity have not been identified or certified. Original synthetic 126 checks cover structure/scoring and remain labeled synthetic.

@@ -16,7 +16,7 @@ fn main() -> eframe::Result<()> {
     let title = pka_lab_inspector::localization::Localizer::new().text("vi", "app.title");
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title(title.clone())
+            .with_title(format!("{title} v{}", env!("CARGO_PKG_VERSION")))
             .with_inner_size([1280.0, 820.0])
             .with_min_inner_size([960.0, 600.0])
             .with_active(true),

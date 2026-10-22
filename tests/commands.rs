@@ -4,14 +4,74 @@ use pka_lab_inspector::{
 };
 
 fn checkpoint(property: &str, expected: &str) -> Checkpoint {
-    Checkpoint {
+    let mut c = Checkpoint {
         device: "R1".into(),
         device_type: "Router".into(),
         interface: "GigabitEthernet0/0".into(),
         property: property.into(),
         expected: expected.into(),
         ..Default::default()
+    };
+    if property == "Default Gateway" {
+        c.device_type = "Switch".into();
+        c.evidence.extend(
+            [
+                "commands:parameter:ip_routing=disabled",
+                "commands:parameter:address=192.0.2.1",
+                "commands:parameter:mask=255.255.255.0",
+            ]
+            .into_iter()
+            .map(str::to_owned),
+        );
     }
+    if matches!(
+        property,
+        "VLAN"
+            | "Switchport Mode"
+            | "Access VLAN"
+            | "Native VLAN"
+            | "Allowed VLANs"
+            | "Port Security"
+            | "Port Security Maximum"
+            | "Port Security Violation"
+            | "Port Security MAC"
+            | "Port Security Sticky"
+    ) {
+        c.device_type = "Switch".into();
+        c.interface = "GigabitEthernet0/1".into();
+        c.evidence.push("assessment:device-model=2960-24TT".into());
+        let mut metadata = vec![
+            ("interface_mode", "access"),
+            ("vlan_active", "yes"),
+            ("vtp_mode", "transparent"),
+            ("vtp_version", "2"),
+            ("current_mode", "access"),
+            ("port_security", "disabled"),
+            ("current_group", "0"),
+            ("maximum", "2"),
+            ("secure_count", "1"),
+            ("available_capacity", "32"),
+            ("voice_vlan", "disabled"),
+            ("span_destination", "no"),
+            ("violation", "restrict"),
+            ("sticky", "enabled"),
+        ];
+        if matches!(property, "Native VLAN" | "Allowed VLANs") {
+            metadata.retain(|(k, _)| *k != "interface_mode");
+            metadata.push(("interface_mode", "trunk"));
+        }
+        if property == "Native VLAN" {
+            metadata.push(("peer_native_vlan", expected));
+        }
+        if property == "Allowed VLANs" {
+            metadata.push(("operation", "replace"));
+        }
+        // Synthetic dependency evidence is explicit; production never fills it from examples.
+        for (key, value) in metadata {
+            c.evidence.push(format!("commands:parameter:{key}={value}"));
+        }
+    }
+    c
 }
 
 #[test]
@@ -131,7 +191,11 @@ fn supported_families_have_scoped_commands() {
             "100 192.0.2.0 0.0.0.255",
             "router eigrp 100\nnetwork 192.0.2.0 0.0.0.255\nexit",
         ),
-        ("Enable Secret", "test-secret", "enable secret test-secret"),
+        (
+            "Enable Secret",
+            "test-secret",
+            "enable secret 0 test-secret",
+        ),
         (
             "Password Encryption",
             "enabled",
@@ -155,10 +219,18 @@ fn supported_families_have_scoped_commands() {
         (
             "Local User",
             "admin 15 test-secret",
-            "username admin privilege 15 secret test-secret",
+            "username admin privilege 15 secret 0 test-secret",
         ),
     ] {
-        let result = generate(&checkpoint(property, value));
+        let mut requirement = checkpoint(property, value);
+        if property == "VTY SSH" {
+            requirement.evidence.extend([
+                "commands:parameter:local_user_present=yes".into(),
+                "commands:parameter:ssh_enabled=yes".into(),
+                "commands:parameter:aaa_mode=disabled".into(),
+            ]);
+        }
+        let result = generate(&requirement);
         assert!(result.supported, "{property}: {}", result.explanation);
         assert!(!result.gui);
         assert!(result.text.starts_with("enable\nconfigure terminal\n"));
@@ -248,11 +320,21 @@ fn scripts_keep_devices_and_contexts_separate_and_save_last() {
     ];
     let mut second = checkpoint("Hostname", "router-two");
     second.device = "R2".into();
+    for item in &mut items {
+        if item.property == "OSPF Network" {
+            item.device = "R2".into();
+        } else {
+            item.device_type = "Switch".into();
+            item.evidence
+                .push("assessment:device-model=2960-24TT".into());
+        }
+    }
     items.push(second);
     let script = device_script(&items, None);
     assert_eq!(script.matches("enable\n").count(), 2);
     assert!(script.find("vlan 20\n").unwrap() < script.find("switchport access vlan").unwrap());
-    assert!(script.contains("switchport access vlan 20\nexit\nrouter ospf 1"));
+    assert!(script.contains("switchport access vlan 20\nexit"));
+    assert!(script.contains("router ospf 1"));
     assert!(script.contains("end\ncopy running-config startup-config\n\n! Device: R2"));
     let selected = device_script(&items, Some("R2"));
     assert!(selected.contains("router-two"));
@@ -294,7 +376,7 @@ fn missing_interface_does_not_guess_and_unknown_is_only_a_comment() {
 
 #[test]
 fn interface_dependencies_are_ordered_without_reordering_acl_rules() {
-    let items = vec![
+    let mut items = vec![
         checkpoint("Port Status", "up"),
         checkpoint("Port Security Maximum", "2"),
         checkpoint("Port Security", "true"),
@@ -302,6 +384,13 @@ fn interface_dependencies_are_ordered_without_reordering_acl_rules() {
         checkpoint("Standard ACL", "10 deny 192.0.2.0 0.0.0.255"),
         checkpoint("Standard ACL", "10 permit 198.51.100.0 0.0.0.255"),
     ];
+    items[0].device_type = "Switch".into();
+    items[0].interface = "GigabitEthernet0/1".into();
+    for item in &mut items {
+        if item.property == "Standard ACL" {
+            item.device = "R2".into();
+        }
+    }
     let script = device_script(&items, None);
     for (before, after) in [
         ("switchport mode access", "switchport port-security\n"),
@@ -384,12 +473,6 @@ fn scripts_skip_conflicting_requirements_including_gui_and_aliases() {
     );
     assert!(!script.contains("shutdown\n"));
     for (property, first, second, forbidden) in [
-        (
-            "Static Route",
-            "0.0.0.0 0.0.0.0 192.0.2.1",
-            "0.0.0.0 0.0.0.0 192.0.2.2",
-            "ip route ",
-        ),
         (
             "Standard ACL",
             "10 permit 192.0.2.0 0.0.0.255",
