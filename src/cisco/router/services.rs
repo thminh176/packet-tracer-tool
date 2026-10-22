@@ -1,8 +1,8 @@
 use super::*;
 use std::net::Ipv4Addr;
 const ACL: &str = "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/sec_data_acl/configuration/15-sy/sec-data-acl-15-sy-book/sec-create-ip-apply.html";
-const NAT: &str = "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipaddr_nat/configuration/xe-2/nat-xe-2-book/iadnat-addr-consv.html";
-const DHCP: &str = "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipaddr_dhcp/configuration/15-mt/dhcp-15-mt-book/config-dhcp-server.html";
+const NAT: &str = "https://www.cisco.com/c/en/us/td/docs/routers/ios/config/17-x/ip-addressing/b-ip-addressing/m_iadnat-addr-consv-xe.html";
+const DHCP: &str = "https://www.cisco.com/c/en/us/td/docs/routers/ios/config/17-x/ip-addressing/b-ip-addressing/m_config-dhcp-server-xe.html";
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         spec(
@@ -100,7 +100,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 ),
             ],
             NAT,
-            "Cisco IOS XE Release 2",
+            "Cisco classic IOS syntax; cross-checked IOS XE 17.x",
             vec![
                 "Inside/outside interface roles configured; global address routed; no conflicting translations",
             ],
@@ -125,7 +125,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 ),
             ],
             NAT,
-            "Cisco IOS XE Release 2",
+            "Cisco classic IOS syntax; cross-checked IOS XE 17.x",
             vec!["Routed interface and explicit inside/outside topology"],
             vec!["show ip nat statistics"],
         ),
@@ -164,8 +164,11 @@ pub fn specs() -> Vec<CommandSpec> {
                 ),
             ],
             DHCP,
-            "Cisco IOS 15M&T",
-            vec!["Review existing pool and exclusions; DHCP service enabled; no competing server"],
+            "Cisco classic IOS syntax; cross-checked IOS XE 17.x",
+            vec![
+                "Review existing pool and exclusions; DHCP service enabled; no competing server",
+                "Receiving interface subnet or relay giaddr must select this pool; exclude externally assigned gateway and server addresses explicitly",
+            ],
             vec!["show ip dhcp pool", "show ip dhcp binding"],
         ),
         spec(
@@ -194,7 +197,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 ),
             ],
             DHCP,
-            "Cisco IOS 15M&T",
+            "Cisco classic IOS syntax; cross-checked IOS XE 17.x",
             vec!["Range belongs to intended DHCP subnet"],
             vec!["show running-config", "show ip dhcp pool"],
         ),
@@ -206,6 +209,16 @@ fn name(value: &str) -> bool {
         && value
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || "_-".contains(c))
+}
+// Client pools and exclusions must not span reserved or loopback space even
+// when both supplied endpoints independently look like unicast addresses.
+fn client_range(first: Ipv4Addr, last: Ipv4Addr) -> bool {
+    let first = u32::from(first);
+    let last = u32::from(last);
+    first >= u32::from(Ipv4Addr::new(1, 0, 0, 0))
+        && last < u32::from(Ipv4Addr::new(224, 0, 0, 0))
+        && (last < u32::from(Ipv4Addr::new(127, 0, 0, 0))
+            || first >= u32::from(Ipv4Addr::new(128, 0, 0, 0)))
 }
 pub fn generate(req: &CommandRequest) -> Result<Vec<ModeCommand>, String> {
     router_device(req)?;
@@ -251,6 +264,8 @@ pub fn generate(req: &CommandRequest) -> Result<Vec<ModeCommand>, String> {
                 if !(n <= 199 || n >= 1300) {
                     return Err("Invalid IPv4 ACL number range".into());
                 }
+            } else if !acl.as_bytes()[0].is_ascii_alphabetic() {
+                return Err("Named IPv4 ACL must begin with an alphabetic character".into());
             }
             let direction = req.required("direction")?;
             if !matches!(direction, "in" | "out") {
@@ -289,11 +304,8 @@ pub fn generate(req: &CommandRequest) -> Result<Vec<ModeCommand>, String> {
                 return Err("Invalid DHCP pool name".into());
             }
             let net = network(req, "network")?;
-            if net.prefix > 30
-                || net.network.octets()[0] == 0
-                || net.network.octets()[0] == 127
-                || net.network.octets()[0] >= 224
-            {
+            let last = Ipv4Addr::from(u32::from(net.network) | !u32::from(net.subnet_mask));
+            if net.prefix > 30 || !client_range(net.network, last) {
                 return Err("DHCP requires a usable unicast client subnet".into());
             }
             let mode = ConfigMode::DhcpPool(pool.into());
@@ -325,8 +337,8 @@ pub fn generate(req: &CommandRequest) -> Result<Vec<ModeCommand>, String> {
                 format!("ip dhcp excluded-address {start}")
             } else {
                 let end = ipv4(req, "end")?;
-                if u32::from(end) < u32::from(start) {
-                    return Err("DHCP exclusion range is reversed".into());
+                if u32::from(end) < u32::from(start) || !client_range(start, end) {
+                    return Err("DHCP exclusion range is reversed or spans reserved space".into());
                 }
                 format!("ip dhcp excluded-address {start} {end}")
             };

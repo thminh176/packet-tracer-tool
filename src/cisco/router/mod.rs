@@ -100,10 +100,38 @@ fn spec(
 }
 fn iface(req: &CommandRequest) -> Result<String, String> {
     let value = req.required("interface")?;
-    if !is_valid_interface_name(value) {
+    validate_interface(req, value)?;
+    Ok(value.into())
+}
+fn validate_interface(req: &CommandRequest, value: &str) -> Result<(), String> {
+    if value.len() > 128 || !is_valid_interface_name(value) {
         return Err("Invalid interface structure".into());
     }
-    Ok(value.into())
+    let lower = value.to_ascii_lowercase();
+    if lower.starts_with("se") && req.profile == DeviceProfile::Isr4321 {
+        return Err("Serial interface requires device/module evidence".into());
+    }
+    // The shared assessment parser accepts structural names, including impossible
+    // virtual-interface paths. Generation requires the stricter IOS context.
+    if let Some(unit) = lower
+        .strip_prefix("loopback")
+        .or_else(|| lower.strip_prefix("lo"))
+    {
+        let n = unit
+            .parse::<u32>()
+            .map_err(|_| "Loopback requires a single unit number")?;
+        if n > 2_147_483_647 {
+            return Err("Loopback unit exceeds supported IOS range".into());
+        }
+    } else if let Some(unit) = lower.strip_prefix("vlan") {
+        let n = unit
+            .parse::<u32>()
+            .map_err(|_| "VLAN interface requires a single VLAN ID")?;
+        if !(1..=4094).contains(&n) {
+            return Err("VLAN interface ID must be 1..=4094".into());
+        }
+    }
+    Ok(())
 }
 fn router_device(req: &CommandRequest) -> Result<(), String> {
     if matches!(

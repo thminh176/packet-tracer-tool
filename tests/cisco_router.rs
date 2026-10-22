@@ -336,6 +336,208 @@ fn dhcp_checks_subnet_gateway_and_exclusion_order() {
         .is_err()
     );
 }
+
+#[test]
+fn virtual_interfaces_require_ios_units_in_commands_and_routes() {
+    for interface in [
+        "Loopback0/1",
+        "Lo0.1",
+        "Loopback2147483648",
+        "Vlan0",
+        "Vlan4095",
+        "Vlan1/2",
+        "Vlan10.1",
+    ] {
+        assert!(
+            router::generate(&request(
+                "router.interface.description",
+                &[("interface", interface), ("description", "test")]
+            ))
+            .is_err(),
+            "{interface}"
+        );
+        let route = format!("2001:db8::/64 {interface}");
+        assert!(
+            router::generate(&request("router.route.ipv6", &[("route", &route)])).is_err(),
+            "{route}"
+        );
+        let route = format!("10.0.0.0 255.0.0.0 {interface}");
+        assert!(
+            router::generate(&request("router.route.ipv4", &[("route", &route)])).is_err(),
+            "{route}"
+        );
+    }
+    assert!(
+        script(
+            "router.interface.ipv4",
+            &[
+                ("interface", "Loopback0"),
+                ("address", "192.0.2.1"),
+                ("mask", "255.255.255.255")
+            ]
+        )
+        .contains("ip address 192.0.2.1 255.255.255.255")
+    );
+}
+
+#[test]
+fn isr_serial_module_uncertainty_is_rejected_consistently() {
+    for (family, pairs) in [
+        (
+            "router.interface.shutdown",
+            vec![("interface", "Serial0/0/0"), ("state", "no shutdown")],
+        ),
+        (
+            "router.nat.interface",
+            vec![("interface", "Se0/0/0"), ("role", "inside")],
+        ),
+        (
+            "router.acl.apply",
+            vec![("interface", "Se0/0/0"), ("acl", "10"), ("direction", "in")],
+        ),
+        (
+            "router.route.ipv4",
+            vec![("route", "10.0.0.0 255.0.0.0 Serial0/0/0")],
+        ),
+        (
+            "router.route.ipv6",
+            vec![("route", "2001:db8::/64 Serial0/0/0 fe80::2")],
+        ),
+    ] {
+        let mut req = request(family, &pairs);
+        assert!(router::generate(&req).is_ok(), "router 2911: {family}");
+        req.profile = DeviceProfile::Isr4321;
+        assert!(router::generate(&req).is_err(), "ISR4321: {family}");
+    }
+}
+
+#[test]
+fn interface_special_addresses_and_masks_are_not_generated() {
+    for mask in ["0.0.0.0", "255.255.255.255"] {
+        assert!(
+            router::generate(&request(
+                "router.interface.ipv4",
+                &[
+                    ("interface", "Gi0/0"),
+                    ("address", "192.0.2.1"),
+                    ("mask", mask)
+                ]
+            ))
+            .is_err()
+        );
+    }
+    for address in [
+        "::1/128",
+        "::/64",
+        "ff02::1/64",
+        "::ffff:192.0.2.1/128",
+        "fe80::1/64",
+    ] {
+        assert!(
+            router::generate(&request(
+                "router.interface.ipv6",
+                &[("interface", "Gi0/0"), ("address", address)]
+            ))
+            .is_err(),
+            "{address}"
+        );
+    }
+    assert!(
+        router::generate(&request(
+            "router.route.ipv6",
+            &[("route", "2001:db8::/64 ::ffff:192.0.2.2")]
+        ))
+        .is_err()
+    );
+}
+
+#[test]
+fn named_acl_starts_with_a_letter_and_numbered_ranges_remain_supported() {
+    for acl in ["1LAN", "_LAN", "-LAN", "200", "1299", "2700"] {
+        assert!(
+            router::generate(&request(
+                "router.acl.apply",
+                &[("interface", "Gi0/0"), ("acl", acl), ("direction", "out")]
+            ))
+            .is_err(),
+            "{acl}"
+        );
+    }
+    for acl in ["LAN_1", "1", "199", "1300", "1999", "2000", "2699"] {
+        assert!(
+            script(
+                "router.acl.apply",
+                &[("interface", "Gi0/0"), ("acl", acl), ("direction", "out")]
+            )
+            .contains(&format!("ip access-group {acl} out"))
+        );
+    }
+}
+
+#[test]
+fn ospf_area_syntax_and_router_parameter_limits_are_enforced() {
+    for area in ["+1", "4294967296", "0.0.0.256", "1 area 0"] {
+        assert!(
+            router::generate(&request(
+                "router.ospf.network",
+                &[
+                    ("process_id", "1"),
+                    ("network", "10.0.0.0/24"),
+                    ("area", area)
+                ]
+            ))
+            .is_err(),
+            "{area}"
+        );
+    }
+    let description = "x".repeat(240);
+    assert!(
+        router::generate(&request(
+            "router.interface.description",
+            &[("interface", "Gi0/0"), ("description", &description)]
+        ))
+        .is_ok()
+    );
+    for length in [241, 513, 10_000] {
+        let description = "x".repeat(length);
+        assert!(
+            router::generate(&request(
+                "router.interface.description",
+                &[("interface", "Gi0/0"), ("description", &description)]
+            ))
+            .is_err()
+        );
+    }
+}
+
+#[test]
+fn dhcp_ranges_cannot_span_reserved_client_address_space() {
+    for network in ["128.0.0.0/1", "64.0.0.0/2", "126.0.0.0/7", "224.0.0.0/8"] {
+        assert!(
+            router::generate(&request(
+                "router.dhcp.pool",
+                &[("pool", "LAN"), ("network", network)]
+            ))
+            .is_err(),
+            "{network}"
+        );
+    }
+    assert!(
+        router::generate(&request(
+            "router.dhcp.exclude",
+            &[("start", "126.0.0.1"), ("end", "128.0.0.1")]
+        ))
+        .is_err()
+    );
+    // Numeric DHCP pool names are documented IOS syntax and differ from ACL names.
+    assert!(
+        script(
+            "router.dhcp.pool",
+            &[("pool", "0"), ("network", "10.0.0.0/24")]
+        )
+        .contains("ip dhcp pool 0\nnetwork 10.0.0.0 255.255.255.0")
+    );
+}
 #[test]
 fn direct_router_entry_rejects_unknown_fields_and_cli_injection() {
     for description in ["LAN\nreload", "LAN;reload", "LAN\rno shutdown"] {

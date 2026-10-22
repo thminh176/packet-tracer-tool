@@ -1,13 +1,11 @@
 use super::*;
 use std::net::{Ipv4Addr, Ipv6Addr};
-const SOURCE: &str =
-    "https://www.cisco.com/c/en/us/td/docs/ios/ipv6/command/reference/ipv6_book/ipv6_04.html";
+const SOURCE: &str = "https://www.cisco.com/c/en/us/td/docs/routers/ios/config/17-x/ip-addressing/b-ip-addressing/m_config-ipv4-addr-0.html";
 const DESCRIPTION: &str = "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/lanswitch/configuration/15-mt/lsw-15-mt-book/lsw-hwic-ethsw-ic.html";
 const SHUTDOWN: &str = "https://www.cisco.com/E-Learning/bulk/public/tac/cim/cib/using_cisco_ios_software/cmdrefs/shutdown.htm";
 const IPV6: &str =
     "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipv6/command/ipv6-cr-book/ipv6-i1.html";
-const DOT1Q: &str =
-    "https://www.cisco.com/c/en/us/td/docs/ios/lanswitch/command/reference/lsw_book/lsw_b1.html";
+const DOT1Q: &str = "https://www.cisco.com/c/en/us/td/docs/routers/ios/config/17-x/lan-wan/b-lan-wan/m_lsw-conf-rout-vlan.html";
 pub fn specs() -> Vec<CommandSpec> {
     let mut result = vec![];
     for (id, en, vi, syntax, fields, source, capability) in [
@@ -130,6 +128,19 @@ pub fn specs() -> Vec<CommandSpec> {
     ] {
         let mut parameters = vec![interface_param()];
         parameters.extend(fields);
+        let mut prerequisites = vec![
+            "Existing supported interface; addressing requires a router routed interface",
+            "Review current configuration before applying",
+        ];
+        if matches!(id, "router.interface.ipv4" | "router.interface.ipv6") {
+            prerequisites.push("Ethernet subinterface addressing requires VLAN encapsulation configured first; parent must be operational");
+        }
+        if id == "router.interface.ipv4" {
+            prerequisites.push("A /31 IPv4 subnet requires a point-to-point link; /32 generation is limited to loopbacks");
+        }
+        if id == "router.interface.dot1q" {
+            prerequisites.push("Parent Ethernet interface must be operational; peer trunk VLAN/native configuration must match");
+        }
         result.push(spec(
             id,
             en,
@@ -144,10 +155,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 _ => source,
             },
             "Cisco classic IOS (command reference); interface descriptions IOS 15M&T",
-            vec![
-                "Existing supported interface; addressing requires a router routed interface",
-                "Review current configuration before applying",
-            ],
+            prerequisites,
             vec!["show interfaces", "show running-config"],
         ));
     }
@@ -165,6 +173,11 @@ pub fn generate(req: &CommandRequest) -> Result<Vec<ModeCommand>, String> {
                 .map_err(|_| "Invalid subnet mask")?;
             let prefix = crate::network_values::subnet_to_prefix(mask)
                 .ok_or("Non-contiguous subnet mask")?;
+            if prefix == 0 || (prefix == 32 && !interface.to_ascii_lowercase().starts_with("lo")) {
+                return Err(
+                    "Use a nonzero interface mask; /32 requires a loopback interface".into(),
+                );
+            }
             if prefix < 31 {
                 let host = u32::from(ip) & !u32::from(mask);
                 if host == 0 || host == !u32::from(mask) {
@@ -183,7 +196,9 @@ pub fn generate(req: &CommandRequest) -> Result<Vec<ModeCommand>, String> {
             let length: u8 = prefix.parse().map_err(|_| "Invalid IPv6 prefix")?;
             if length > 128
                 || ip.is_unspecified()
+                || ip.is_loopback()
                 || ip.is_multicast()
+                || ip.to_ipv4_mapped().is_some()
                 || (ip.segments()[0] & 0xffc0) == 0xfe80
             {
                 return Err("Use a unicast IPv6 address; link-local has a separate family".into());

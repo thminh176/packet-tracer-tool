@@ -3,13 +3,11 @@ use crate::network_values::{
     ParsedIpv6StaticRoute, ParsedOspfNetwork, ParsedStaticRoute, classful_prefix,
 };
 use std::net::Ipv4Addr;
-const OSPF: &str = "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/iproute_ospf/configuration/15-mt/iro-15-mt-book/iro-cfg.html";
-const STATIC: &str =
-    "https://www.cisco.com/c/en/us/td/docs/ios/iproute_pi/command/reference/iri_book/iri_pi1.html";
-const IPV6: &str =
-    "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipv6/command/ipv6-cr-book/ipv6-i4.html";
-const RIP: &str = "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/iproute_rip/configuration/15-mt/irr-15-mt-book/irr-cfg-info-prot.html";
-const EIGRP: &str = "https://www.cisco.com/en/US/docs/ios-xml/ios/iproute_eigrp/configuration/15-0s/Configuring_EIGRP.html";
+const OSPF: &str = "https://www.cisco.com/c/en/us/td/docs/routers/ios/config/17-x/ip-routing/b-ip-routing/m_iro-cfg-0.html";
+const STATIC: &str = "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/iproute_pi/command/iri-cr-book/iri-cr-a1.html";
+const IPV6: &str = "https://www.cisco.com/c/en/us/td/docs/routers/ios/config/17-x/ip-routing/b-ip-routing/m_ip6-route-static-xe.html";
+const RIP: &str = "https://www.cisco.com/c/en/us/td/docs/routers/ios/config/17-x/ip-routing/b-ip-routing/m_irr-cfg-info-prot-0.html";
+const EIGRP: &str = "https://www.cisco.com/c/en/us/td/docs/routers/ios/config/17-x/ip-routing/b-ip-routing/m_ire-enhanced-igrp.html";
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         spec(
@@ -48,8 +46,12 @@ pub fn specs() -> Vec<CommandSpec> {
                 "10.0.0.0 255.0.0.0 192.0.2.2",
             )],
             STATIC,
-            "Cisco classic IOS, protocol-independent reference (2011)",
-            vec!["Destination has no host bits; next hop reachable; existing exit interface"],
+            "Cisco IOS protocol-independent command reference; cross-checked IOS XE 17.x",
+            vec![
+                "Destination has no host bits; next hop reachable; existing exit interface",
+                "Ethernet interface-only routes assume every destination is on-link and may require proxy ARP; prefer a next hop for remote destinations",
+                "Distance 255 is accepted syntax but prevents route installation",
+            ],
             vec!["show ip route", "show running-config"],
         ),
         spec(
@@ -71,6 +73,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Cisco classic IOS IPv6",
             vec![
                 "IPv6 forwarding enabled; next hop reachable; link-local next hop requires interface",
+                "Exit interface must be up and IPv6-enabled; interface-only targets assume on-link destinations",
             ],
             vec!["show ipv6 route"],
         ),
@@ -101,8 +104,11 @@ pub fn specs() -> Vec<CommandSpec> {
                 ),
             ],
             OSPF,
-            "Cisco IOS 15M&T",
-            vec!["Explicit process and area; configured IPv4 interfaces and intended area design"],
+            "Cisco classic IOS syntax; cross-checked IOS XE 17.x",
+            vec![
+                "Explicit process and area; configured IPv4 interfaces and intended area design",
+                "A stable unique router ID and compatible peer area, timers, authentication and network type are required for adjacencies",
+            ],
             vec![
                 "show ip ospf",
                 "show ip ospf interface",
@@ -128,7 +134,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 network_param(),
             ],
             EIGRP,
-            "Cisco IOS 15.0S (classic autonomous-system mode)",
+            "Cisco classic autonomous-system mode; cross-checked IOS XE 17.x",
             vec!["Matching EIGRP AS and configured IPv4 interfaces; no named mode inference"],
             vec!["show ip eigrp neighbors", "show ip protocols"],
         ),
@@ -151,7 +157,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 network_param(),
             ],
             RIP,
-            "Cisco IOS 15M&T",
+            "Cisco classic IOS syntax; cross-checked IOS XE 17.x",
             vec![
                 "Explicit classful network prefix; configured IPv4 interface; existing summary policy preserved",
             ],
@@ -173,19 +179,23 @@ pub fn generate(req: &CommandRequest) -> Result<Vec<ModeCommand>, String> {
         "router.route.ipv4" => {
             let route = ParsedStaticRoute::parse(req.required("route")?)?;
             let text = route.to_cisco_command().ok_or("Incomplete IPv4 route")?;
-            if route
-                .exit_interface
-                .as_deref()
-                .is_some_and(|i| i.to_ascii_lowercase().starts_with("se"))
-                && req.profile == DeviceProfile::Isr4321
-            {
-                return Err("Serial interface requires device/module evidence".into());
+            if let Some(interface) = route.exit_interface.as_deref() {
+                validate_interface(req, interface)?;
             }
             Ok(vec![at(ConfigMode::Global, text)])
         }
         "router.route.ipv6" => {
             let route =
                 ParsedIpv6StaticRoute::parse(req.required("route")?).ok_or("Invalid IPv6 route")?;
+            if let Some(interface) = route.exit_interface.as_deref() {
+                validate_interface(req, interface)?;
+            }
+            if route
+                .next_hop
+                .is_some_and(|ip| ip.to_ipv4_mapped().is_some())
+            {
+                return Err("IPv4-mapped IPv6 next hop is not supported".into());
+            }
             let text = route
                 .to_cisco_command()
                 .ok_or("Incomplete IPv6 route or missing interface for link-local next hop")?;
@@ -194,9 +204,13 @@ pub fn generate(req: &CommandRequest) -> Result<Vec<ModeCommand>, String> {
         "router.ospf.network" => {
             let process = number(req, "process_id", 1, 65534)?;
             let net = network(req, "network")?;
+            let area = req.required("area")?;
+            if !area.bytes().all(|b| b.is_ascii_digit()) && area.parse::<Ipv4Addr>().is_err() {
+                return Err("OSPF area must be unsigned decimal or dotted IPv4 notation".into());
+            }
             let ospf = ParsedOspfNetwork::parse(&net.cidr())?
                 .with_process_id(process)
-                .with_area(req.required("area")?);
+                .with_area(area);
             let command = ospf
                 .to_cisco_command()
                 .ok_or("Invalid explicit OSPF process or area")?;
