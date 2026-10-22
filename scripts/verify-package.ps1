@@ -10,8 +10,10 @@ try {
     $names=@($entries|ForEach-Object{$_.FullName.Replace('\','/')})
     if(@($names|Where-Object{$_ -match '(?i)\.(pka|pkt|pkz|pksz|pem|key|ttf|otf)$|private-fixtures|/target/|\.\./'}).Count){throw 'Forbidden ZIP entry'}
     if(@($names|Where-Object{$_ -match '(?i)\.exe$'}).Count -ne 1){throw 'Expected exactly one application EXE'}
+    $exeName=@($names|Where-Object{$_ -match '(?i)\.exe$'})[0]
+    $root=$exeName.Substring(0,$exeName.LastIndexOf('/'))
     foreach($suffix in @('/pka-lab-inspector.exe','/locales/en.json','/locales/vi.json','/LICENSE','/THIRD_PARTY_NOTICES.md','/SHA256.txt','/third-party/license-sources.json')){
-        if(@($names|Where-Object{$_.EndsWith($suffix)}).Count -ne 1){throw "Missing package requirement: $suffix"}
+        if(@($names|Where-Object{$_ -eq ($root+$suffix)}).Count -ne 1){throw "Missing package requirement: $suffix"}
     }
     foreach($fontNotice in @('Hack-Regular.txt','OFL.txt','UFL.txt','emoji-icon-font-mit-license.txt')){
         if(!@($names|Where-Object{$_.EndsWith("/$fontNotice")})){throw "Missing embedded-font notice: $fontNotice"}
