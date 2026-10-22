@@ -63,3 +63,5 @@ Other independent tools include PKA Decipher and cisco-pka-to-xml. Their work is
 ## Roadmap
 
 After v0.1.0: parser/validator coverage with permitted fixtures, better diagnostics, topology/subnet tools, and investigation of an **optional read-only** pktctl adapter. Live Windows support is unverified and not required for offline use; future live writes require explicit user confirmation. Major features stay on separate branches.
+
+Windows runtime: if `VCRUNTIME140.dll` is missing, install Microsoft's official Visual C++ x64 Redistributable (see installation guide). It is not bundled. The application works offline after its OS/runtime prerequisites are installed.

@@ -1,4 +1,4 @@
-﻿# Verification and known limits
+# Verification and known limits
 
 Test date: 2026-10-22. Target: Windows x86_64, Rust 1.99.1, native eframe/egui 0.33.3 OpenGL backend.
 
@@ -58,7 +58,7 @@ The initial release process produced a window handle in approximately 5.2 second
 
 ## Final local check results
 
-Final application suite: **68 passed, 0 failed, 1 opt-in real-file test ignored by default** (6 library, 24 GUI/state/render, 11 command, 27 inspector tests). The opt-in test was also run separately against the private duplicate and passed. Vendored codec suite: **18 passed, 0 failed**. Strict Clippy and rustfmt checks pass. The Windows release build succeeds.
+Final application suite: **72 passed, 0 failed, 1 opt-in real-file test ignored by default** (6 library, 24 GUI/state/render, 12 command, 30 inspector tests). The opt-in test was also run separately against the private duplicate and passed. Vendored codec suite: **18 passed, 0 failed**. Strict Clippy and rustfmt checks pass. The Windows release build succeeds.
 
 The release GUI additionally loaded the private duplicate and reported 213 Unverified / 213 total candidates with 0 verified points; the process remained responsive. Its observed working set was about 139 MiB, with 210 MiB peak. The final probe reports 33 supported CLI checkpoint suggestions and 19 supported GUI suggestions on that duplicate; this is command-generation availability, not proof that the commands satisfy every native grader.
 

@@ -49,3 +49,5 @@ Xem [CONTRIBUTING](CONTRIBUTING.md), [kiến trúc](docs/ARCHITECTURE.md), [bả
 Mã ứng dụng gốc dùng MIT. Bộ giải mã dùng pktfile 0.2.2 của [TantiE100/pktctl](https://github.com/TantiE100/pktctl), MIT, kèm bản vá giới hạn giải nén; giữ nguyên bản quyền/giấy phép upstream. Xem [thư viện bên thứ ba](THIRD_PARTY_NOTICES.md), [kiểm toán giấy phép](docs/LICENSE_AUDIT.md) và [so sánh hệ sinh thái](docs/ECOSYSTEM_COMPARISON.md). Không sao chép hoặc chuyển ngữ triển khai có giấy phép hạn chế từ PKA Decipher.
 
 Sau bản đầu: mở rộng đối chiếu bằng mẫu hợp lệ, công cụ topology/subnet và nghiên cứu adapter pktctl tùy chọn ở chế độ chỉ đọc. Tính năng lớn làm trên nhánh riêng; không làm hỏng bản đã phát hành.
+
+Nếu Windows báo thiếu `VCRUNTIME140.dll`, cài Microsoft Visual C++ Redistributable bản x64 từ liên kết Microsoft trong [hướng dẫn cài đặt](docs/INSTALLATION.md). Bộ cài runtime không nằm trong ZIP; ứng dụng dùng ngoại tuyến sau khi đã có đủ runtime hệ thống.

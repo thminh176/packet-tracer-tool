@@ -2,11 +2,11 @@
 //! documented in `generate`; unknown assessment encodings are never CLI values.
 use crate::model::{Checkpoint, Command};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     net::{Ipv4Addr, Ipv6Addr},
 };
 
-#[derive(Default, PartialEq, Eq)]
+#[derive(Default, Clone, PartialEq, Eq, Hash)]
 struct Plan {
     context: Vec<String>,
     lines: Vec<String>,
@@ -681,6 +681,7 @@ pub fn device_script(checkpoints: &[Checkpoint], device: Option<&str>) -> String
             }
         }
         let mut plans = Vec::new();
+        let mut unique_plans = HashSet::new();
         let mut omitted = 0;
         let mut conflicts = 0;
         for c in items {
@@ -694,7 +695,7 @@ pub fn device_script(checkpoints: &[Checkpoint], device: Option<&str>) -> String
             let command = generate(c);
             if command.supported && !command.gui {
                 if let Ok(p) = plan(c)
-                    && !plans.contains(&p)
+                    && unique_plans.insert(p.clone())
                 {
                     plans.push(p);
                 }
