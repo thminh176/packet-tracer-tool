@@ -1,3 +1,12 @@
+# Packet Tracer Tool 0.2.2-dev - Cisco services expansion (unreleased)
+
+Adds eight bounded workflows: DHCP relay, serial DCE clock, serial PPP, global and interface CDP, OSPFv2 router ID, passive interface and reference bandwidth. The catalog now has 56 families. Required process, interface, hardware and peer context remain explicit; unknown numeric schema flags are not generalized.
+
+Generation and synthetic mapping tests are separate from saved-configuration validation. These eight families do not add grading validators or real Packet Tracer execution certification. This branch is a development build, not a published stable release.
+
+Research, sources and next priorities: CISCO_EXPANSION_RESEARCH.md. Test evidence: TEST_RESULTS.md.
+
+---
 # Packet Tracer Tool v0.2.1 - IPv6 and dot1Q checkpoint fixes
 
 - Explicit IPv6 Unicast Routing = 1 now generates ipv6 unicast-routing in global configuration mode. Disabling forwarding carries an impact warning.

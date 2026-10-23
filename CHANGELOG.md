@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.2-dev — Cisco service coverage (unreleased)
+
+- Add explicit DHCP relay, DCE serial clock, synchronous PPP, global/interface CDP, and OSPFv2 router ID/passive/reference-bandwidth workflows; 56 bounded families in total.
+- Require explicit process IDs, hardware/cable/peer assertions and correct configuration modes. Additional checkpoint aliases are synthetically tested; automatic validation for these eight new families remains unsupported.
+- Preserve multiple DHCP relay servers; transfer incomplete supported requirements into the bilingual Library without invented context.
+- Add an original research matrix covering 14 expansion topics with 23 Cisco source URLs, separating classic IOS, IOS XE and Packet Tracer execution evidence.
+
 ## 0.2.1 — IPv6 assessment and dot1Q context fixes
 
 - Map the explicit IPv6 Unicast Routing Boolean to global IOS configuration; reject unknown numeric enums and incorrect device/interface scope.

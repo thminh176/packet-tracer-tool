@@ -303,6 +303,7 @@
                      "explanation.ospf_required": "OSPF requires an explicit process ID, network, wildcard and area; no defaults are inferred",
                      "detail.dot1q_required": "802.1Q needs an Ethernet subinterface and an explicit VLAN ID. Supply the missing VLAN in the Command Library; the subinterface suffix is not automatically the VLAN ID.",
                      "explanation.ipv6_disabled": "Disabling IPv6 forwarding affects all IPv6 transit traffic on this device. Review before applying; no commands have been executed.",
+                     "detail.parameters_required": "Complete the missing parameters explicitly in the Command Library. Device dependencies are not inferred.",
                      "explanation.ipv6_boolean": "This IPv6 Boolean field requires 1/0 or true/false; unknown numeric enums are unsupported"
                  }
 }

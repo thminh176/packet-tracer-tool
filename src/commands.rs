@@ -1020,7 +1020,12 @@ fn conflict_key(c: &Checkpoint, p: &Plan) -> Option<String> {
         }
     }
     match property.as_str() {
-        "eigrpnetwork" | "dhcpexcludedaddress" | "save" | "saveconfiguration" => return None,
+        "eigrpnetwork"
+        | "dhcpexcludedaddress"
+        | "save"
+        | "saveconfiguration"
+        | "iphelperaddress"
+        | "dhcprelayaddress" => return None,
         "staticroute" | "ipv4staticroute" => {
             property = format!("route:{} {}", t.first()?, t.get(1)?)
         }

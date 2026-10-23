@@ -4,6 +4,8 @@ Researched 2026-10-23 against public Cisco command references and configuration 
 
 ## Evidence boundary
 
+Coordinator implementation update: branch `feature/cisco-services-coverage` adds eight bounded workflows (DHCP relay, serial DCE clock, serial PPP, two CDP states and three OSPFv2 controls). The rows below retain the **47fb1b3 baseline** for comparison. These additions have synthetic generation tests and explicit checkpoint aliases, but no new semantic grading or actual Packet Tracer execution certification. Serial module/cable/peer inputs are explicit operator assertions; this build does not discover them. Standalone RIP, NTP, LLDP and VTP setters remain research opportunities.
+
 The baseline has **46 registered families and zero Packet Tracer execution-certified families** (`CISCO_COMMAND_COVERAGE.md`). A template can generate commands from explicit inputs without having a reliable PKA assessment mapping. Cisco documentation establishes syntax and behavior on its named software/hardware, not the simulated feature inventory of PT. **Every row below remains uncertified in real PT execution.** No private PKA, exam, device session, or restrictive source was used.
 
 Read-only code inspection found `router.rip.network` already emits an explicit version, `router.dhcp.exclude` already emits exclusions, and `switch.vlan` consumes VTP mode/version as prerequisites. These are not three wholly new families. `src/cisco/mapping.rs` has no dedicated mapping for these expansion properties; `src/commands.rs` has legacy explicit-value branches for `ripnetwork` and `dhcpexcludedaddress`, which do not establish reliable extraction of missing PKA context. OSPF network mapping exists, but does not establish router-ID, passive, or reference-bandwidth mappings.

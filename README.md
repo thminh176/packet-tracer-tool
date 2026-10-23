@@ -1,6 +1,6 @@
 # Packet Tracer Tool
 
-Local 0.2.1 development: IPv6 forwarding checkpoint mapping, interface IPv6 enable/SLAAC and explicit dot1Q VLAN completion. The catalog contains 48 bounded families; this does not certify execution on Packet Tracer devices. See [patch evidence](docs/TEST_RESULTS.md).
+Local 0.2.2-dev development: 56 bounded command families, including explicit IPv6/dot1Q checkpoint context, DHCP relay, Serial DCE/PPP, CDP and OSPFv2 controls. This does not certify execution on Packet Tracer devices. See [test evidence](docs/TEST_RESULTS.md) and the [Cisco research matrix](docs/CISCO_EXPANSION_RESEARCH.md). The 0.2.1 bug-fix candidate is kept separately from this expansion branch.
 
 [Tiếng Việt](README.vi.md) · [Download Windows release](https://github.com/thminh176/packet-tracer-tool/releases) · [Compatibility](docs/COMPATIBILITY.md)
 

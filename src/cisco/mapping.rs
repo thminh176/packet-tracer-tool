@@ -105,6 +105,42 @@ pub fn request(c: &Checkpoint, resolved: &str) -> Option<CommandRequest> {
             put("address", resolved);
             "router.interface.link_local"
         }
+        "ospfrouterid" => {
+            put("router_id", resolved);
+            "router.ospf.router_id"
+        }
+        "ospfreferencebandwidth" => {
+            put("mbps", resolved);
+            "router.ospf.reference_bandwidth"
+        }
+        "ospfpassiveinterface" if !c.interface.is_empty() => {
+            put("interface", &c.interface);
+            put("state", resolved);
+            "router.ospf.passive"
+        }
+        "iphelperaddress" | "dhcprelayaddress" if !c.interface.is_empty() => {
+            put("interface", &c.interface);
+            put("server", resolved);
+            "router.dhcp.relay"
+        }
+        "clockrate" if !c.interface.is_empty() => {
+            put("interface", &c.interface);
+            put("bps", resolved);
+            "router.serial.clock"
+        }
+        "encapsulation" if resolved.eq_ignore_ascii_case("ppp") && !c.interface.is_empty() => {
+            put("interface", &c.interface);
+            "router.serial.ppp"
+        }
+        "cdpglobal" if c.interface.is_empty() => {
+            put("enabled", resolved);
+            "basic.cdp_global"
+        }
+        "cdpenable" if !c.interface.is_empty() => {
+            put("interface", &c.interface);
+            put("enabled", resolved);
+            "basic.cdp_interface"
+        }
         "ipv6unicastrouting" if c.interface.is_empty() => {
             put("enabled", resolved);
             "router.ipv6.routing"

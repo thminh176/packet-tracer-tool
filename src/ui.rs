@@ -201,7 +201,18 @@ fn checkpoint_library_request(c: &Checkpoint) -> Option<cisco::CommandRequest> {
     }
     if !commands::is_ospf_network_property(&c.property, &c.path) {
         let request = cisco::mapping::request(c, &c.expected)?;
-        return (request.family == "router.interface.dot1q").then_some(request);
+        let plan = cisco::generate(&request);
+        return (matches!(
+            request.family.as_str(),
+            "router.interface.dot1q"
+                | "router.serial.clock"
+                | "router.serial.ppp"
+                | "basic.cdp_interface"
+                | "router.ospf.router_id"
+                | "router.ospf.passive"
+                | "router.ospf.reference_bandwidth"
+        ) && !plan.missing_parameters.is_empty())
+        .then_some(request);
     }
     let o = network_values::ParsedOspfNetwork::parse(&c.expected).ok()?;
     let prefix = network_values::wildcard_to_prefix(o.wildcard_mask)?;
@@ -2286,10 +2297,10 @@ impl InspectorApp {
                                 copy = Some((cmd.text, format!("{} {}", c.device, c.property)));
                             }
                         } else if let Some(request) = checkpoint_library_request(&c) {
-                            ui.label(tr(if request.family == "router.interface.dot1q" {
-                                "detail.dot1q_required"
-                            } else {
-                                "detail.ospf_process_required"
+                            ui.label(tr(match request.family.as_str() {
+                                "router.interface.dot1q" => "detail.dot1q_required",
+                                "router.ospf.network" => "detail.ospf_process_required",
+                                _ => "detail.parameters_required",
                             }));
                             if ui.button(tr("detail.open_command_library")).clicked() {
                                 self.library_search_query.clear();
@@ -4422,6 +4433,61 @@ mod rendering_checks {
             "commands:parameter:vlan=43".into(),
         ]);
         assert!(checkpoint_library_request(&conflict).is_none());
+    }
+
+    #[test]
+    fn incomplete_service_requirements_transfer_without_synthetic_context() {
+        for (property, expected, interface, family, missing) in [
+            (
+                "Clock Rate",
+                "64000",
+                "Serial0/0/0",
+                "router.serial.clock",
+                "cable_role",
+            ),
+            (
+                "Encapsulation",
+                "PPP",
+                "Serial0/0/0",
+                "router.serial.ppp",
+                "peer_encapsulation",
+            ),
+            (
+                "OSPF Router ID",
+                "192.0.2.9",
+                "",
+                "router.ospf.router_id",
+                "process_id",
+            ),
+            (
+                "OSPF Reference Bandwidth",
+                "1000",
+                "",
+                "router.ospf.reference_bandwidth",
+                "process_id",
+            ),
+            (
+                "CDP Enable",
+                "true",
+                "GigabitEthernet0/0",
+                "basic.cdp_interface",
+                "global_enabled",
+            ),
+        ] {
+            let c = Checkpoint {
+                device: "Synthetic-Router".into(),
+                device_type: "Router".into(),
+                property: property.into(),
+                expected: expected.into(),
+                interface: interface.into(),
+                ..Default::default()
+            };
+            let request = checkpoint_library_request(&c).unwrap();
+            assert_eq!(request.family, family);
+            assert!(request.get(missing).is_empty());
+            assert!(!cisco::generate(&request).executable());
+            assert_eq!(c.status, Status::Unverified);
+        }
     }
 
     #[test]

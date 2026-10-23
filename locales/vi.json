@@ -303,6 +303,7 @@
                      "explanation.ospf_required": "OSPF cần process ID, mạng, wildcard và area rõ ràng; ứng dụng không tự suy diễn giá trị mặc định",
                      "detail.dot1q_required": "802.1Q cần subinterface Ethernet và VLAN ID rõ ràng. Hãy bổ sung VLAN còn thiếu trong Thư viện lệnh; đuôi subinterface không tự động là số VLAN.",
                      "explanation.ipv6_disabled": "Tắt chuyển tiếp IPv6 ảnh hưởng toàn bộ lưu lượng IPv6 đi qua thiết bị này. Hãy xem xét trước khi áp dụng; ứng dụng chưa thực thi lệnh nào.",
+                     "detail.parameters_required": "Bổ sung tham số còn thiếu trong Thư viện lệnh. Ứng dụng không tự đoán điều kiện thiết bị.",
                      "explanation.ipv6_boolean": "Trường Boolean IPv6 này cần 1/0 hoặc true/false; các mã số chưa rõ ý nghĩa chưa được hỗ trợ"
                  }
 }

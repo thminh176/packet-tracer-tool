@@ -1,5 +1,13 @@
 # Verification and known limits
 
+## 0.2.2-dev service coverage (unreleased)
+
+`cargo test --locked`: **218 passed, 0 failed, 1 private opt-in test ignored**. Strict all-target Clippy passes. Eight new service/WAN/OSPF workflows have required-field, syntax/mode, invalid input, profile and injection checks; GUI state tests verify missing cable/peer/process/global-CDP parameters transfer without defaults. The codec and dependency graph are unchanged from the checked 0.2.1 candidate.
+
+The x86_64 MSVC development release build succeeds. A native Windows smoke opened the original four-checkpoint IPv6/dot1Q fixture, showed all four explicit synthetic matches, opened the expanded Library and generated/copied the synthetic global CDP example. The Windows clipboard was read back and matched the expected `cdp run` script. Family names, input descriptions and completion hints are bilingual; several prerequisite/source explanations still use English fallback.
+
+The catalog contains 56 families (10 common, 20 switch, 26 router) with 18 previously declared semantic subsets. The eight new families add generation and explicit aliases, not new automatic grading coverage. Their PKA mappings are tested synthetically only; no additional private file/device execution evidence or official Cisco grading parity is claimed. Serial context parameters are operator-supplied assertions, not automatically discovered hardware facts. No actual Packet Tracer device execution is certified.
+
 ## v0.2.1 local patch, 2026-10-23
 
 `cargo test --locked`: **209 passed, 0 failed, 1 private opt-in test ignored**; the vendor codec separately passes **18 tests**. Formatting, strict all-target Clippy, the Windows x64 MSVC release build and dependency license/source checks pass. The dependency audit reports zero vulnerabilities, with informational unmaintained advisories retained.
