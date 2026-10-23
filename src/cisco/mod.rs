@@ -36,6 +36,7 @@ pub enum ParameterKind {
     Interface,
     Ipv4,
     Ipv6,
+    IpAddress,
     Number(u32, u32),
     Choice(&'static [&'static str]),
     Text,
@@ -184,6 +185,14 @@ fn build_catalog() -> Vec<CommandSpec> {
                 | "router.route.ipv4"
                 | "router.route.ipv6"
                 | "router.ospf.network"
+                | "router.ospf.router_id"
+                | "router.ospf.passive"
+                | "router.ospf.reference_bandwidth"
+                | "router.rip.version"
+                | "router.rip.auto_summary"
+                | "router.rip.passive"
+                | "router.eigrp.router_id"
+                | "router.eigrp.passive"
                 | "switch.port_mode"
                 | "switch.access_vlan"
                 | "switch.trunk_native"
@@ -246,6 +255,7 @@ pub fn valid_parameter(kind: &ParameterKind, value: &str) -> bool {
         Interface => parser::interface_name(value).is_some(),
         Ipv4 => value.parse::<std::net::Ipv4Addr>().is_ok(),
         Ipv6 => value.parse::<std::net::Ipv6Addr>().is_ok(),
+        IpAddress => value.parse::<std::net::IpAddr>().is_ok(),
         Number(min, max) => value
             .parse::<u32>()
             .is_ok_and(|n| (*min..=*max).contains(&n)),

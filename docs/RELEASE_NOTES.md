@@ -1,40 +1,25 @@
-# Packet Tracer Tool v0.2.1 - IPv6 and dot1Q checkpoint fixes
+# Packet Tracer Tool v0.2.2 — Cisco Protocol Coverage
 
-- Explicit IPv6 Unicast Routing = 1 now generates ipv6 unicast-routing in global configuration mode. Disabling forwarding carries an impact warning.
-- Distinct interface ipv6 enable and ipv6 address autoconfig suggestions require explicit enablement and correct interface context. No hidden address, default route or no shutdown is added.
-- EthernetEncapProcess uses a unique selected dot1Q VLAN in the same port scope, or transfers to the bilingual Command Library for explicit completion. Subinterface suffixes are never VLAN evidence.
-- Conflicting dot1Q requirements are omitted from device scripts. Verification requires a unique current snapshot/device and explicit scoped configuration.
-- 48 bounded families; no new live Packet Tracer execution certification. See TEST_RESULTS.md and V0.2.1_COMMAND_RESEARCH.md.
+Independent offline Windows x64 Rust / egui lab companion. Not affiliated with or endorsed by Cisco.
 
-This describes a local candidate and does not establish GitHub publication.
+## Changes
 
----
-# Packet Tracer Tool v0.2.0 — Cisco Command Coverage
+- 66 bounded command families: 12 common, 23 switching and 31 routing; 26 declared configured-state comparison subsets. These counts describe bounded workflows, not universal IOS support.
+- Add IPv4/IPv6 NTP server and source workflows, LLDP global/interface/timers, explicit RIP version/passive/summary and classic EIGRP passive/configured-ID controls.
+- Include DHCP relay, serial DCE clock, serial PPP, CDP and OSPF router-ID/passive/reference-bandwidth workflows.
+- Fix IPv6 Unicast Routing and explicit dot1Q VLAN checkpoint interpretation. Never infer a VLAN from a subinterface suffix or a process/AS from numeric tree labels.
+- Resolve generic assessment labels only within an unambiguous device/protocol scope. Compare configured routing controls only with uniquely owned current configuration evidence. Generic or active Router ID stays Unverified from running-config alone.
+- Block contradictory grouped commands, preserve independent servers/passive ports and clear stale Library parameters when changing command families.
+- Preserve English/Vietnamese interface, offline inspection, individual command copying and report exports.
 
-Independent offline Windows x64 Rust / egui companion for Packet Tracer labs. Not affiliated with or endorsed by Cisco.
+## Tested scope and limitations
 
-## Included
+244 application tests pass; one opt-in private-fixture test remains ignored. All 18 vendored codec tests pass. Formatting, strict Clippy and dependency/security gates pass. Native Windows smoke tested the original public four-checkpoint synthetic fixture, Library search, explicit IPv6 NTP version gating and clipboard contents. See docs/TEST_RESULTS.md for detailed evidence.
 
-- Typed catalog of 46 bounded command families: 8 shared fundamentals/security, 20 switching and 18 router families. Each has parameters, modes, prerequisites, Cisco source links and read-only verification suggestions.
-- Device profiles for 2960/3560, 1941/2911 and ISR4321, plus clearly warned generic/unknown profiles. Documented syntax and actual Packet Tracer execution evidence are separate.
-- Native English/Vietnamese Command Library (Ctrl+7): search, device/topic/profile filters, explicit parameter forms, synthetic learning examples and gated copy actions.
-- No implicit OSPF process 1, no classful inference for generic network values, strict bounded hyphen structures and complete forwarding targets. Equivalent OSPF decimal/dotted areas compare numerically.
-- Route absence requires a unique current snapshot and uniquely owned device configuration. ECMP/floating route statements remain distinct. Contradictory device identities and incompatible gateway workflows suppress suggestions.
-- Mode-aware saved-configuration parsing, explicit scalar switch validators and separate checkpoint command classification / command coverage / automatic verification metrics.
-- Existing read-only PKA/PKT/XML inspection, evidence, manual checklist separation, bilingual preferences and protected reports remain available.
-- Conditional Access/Native/Allowed VLAN assignments and VLAN naming use explicit requirement context; dot1Q uses the explicit VLAN ID, never the subinterface suffix. Current-state verification and strict library prerequisites remain separate.
-- OSPF `RouteN` leaves no longer enter static-route generation or comparison. The table identifies the protocol explicitly; incomplete OSPF requirements can transfer their network/area into the Library for explicit process selection.
+No new command family is execution-certified on actual Packet Tracer devices. Synthetic tests and Cisco documentation are not simulator certification. NTP configuration does not prove synchronization; LLDP generation does not grade neighbors. Saved configuration cannot prove protocol convergence, forwarding or official activity scores. Missing or ambiguous evidence remains Unverified. Some diagnostic prose retains English fallback. Unknown device/image support carries warnings or blocks generation.
 
-## Evidence and limitations
+No private coursework, answer keys, Cisco binaries or logos are distributed. Earlier release tags remain intact.
 
-Automated tests and Windows GUI evidence are recorded in docs/TEST_RESULTS.md; generated catalog counts and timings are in docs/CISCO_COMMAND_COVERAGE.md. **No new command family has been execution-certified against an actual Packet Tracer device.** Official Cisco documentation and synthetic tests are not simulator certification. The application is not Cisco's grader.
+## Windows installation
 
-The 14 declared validator subsets cover particular explicit fields, not complete protocol behavior or every parameter/dependency of those families. No convergence, reachability, forwarding or live activity score is proven. Unknown snapshot roles, defaults, unsupported/opaque configurations and incomplete inputs remain Unverified.
-
-New typed routing/service subsets do not cover OSPFv3, named EIGRP, extended/named/IPv6 ACL semantics, dynamic NAT/PAT validation, PPP/CHAP/PAP, VTP authoring, DHCP snooping, DAI, LLDP, storm control, NTP or arbitrary removal workflows. Some earlier explicit CLI grammars remain available but have no new complete semantic validation claim. Library examples are synthetic and must never be treated as lab answers. Some diagnostics/prerequisite prose and report headings remain English.
-
-## Install
-
-Download packet-tracer-tool-v0.2.0-windows-x64.zip and its .sha256, verify the checksum, extract the complete folder and launch pka-lab-inspector.exe. The EXE is unsigned and may require the official Microsoft Visual C++ x64 runtime. Keep included licenses/notices. Paste IOS suggestions only into the intended Packet Tracer device CLI; the application never executes them.
-
-v0.1.1 remains available as a fallback. No older release tags are replaced. No private activities, answer networks, Cisco binaries or logos are included.
+Download packet-tracer-tool-v0.2.2-windows-x64.zip and its .sha256 from this release. Verify the SHA-256, extract the complete folder, and launch pka-lab-inspector.exe. Keep the included locales, licenses and notices. The EXE is unsigned and may require the Microsoft Visual C++ x64 runtime. Generated commands are suggestions and are never executed automatically.

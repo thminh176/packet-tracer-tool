@@ -139,6 +139,9 @@ pub fn generate(req: &CommandRequest) -> Result<Vec<ModeCommand>, String> {
         .find(|s| s.id == req.family)
         .ok_or("Unknown switch family")?;
     validate(req, spec)?;
+    if req.family.starts_with("switch.lldp.") {
+        return super::lldp::generate(req);
+    }
     let global = |s: String| vec![at(ConfigMode::Global, s)];
     let iface = |s: String| vec![at(ConfigMode::Interface(req.get("interface").into()), s)];
     match req.family.as_str() {

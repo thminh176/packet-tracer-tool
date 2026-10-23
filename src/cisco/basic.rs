@@ -1,5 +1,7 @@
 //! Small shared IOS fundamentals; explicit parameters only, no key regeneration.
 use super::*;
+mod discovery;
+mod time;
 const SECURITY: &str = "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/sec_usr_cfg/configuration/15-mt/sec-usr-cfg-15-mt-book/sec-cfg-sec-4cli.html";
 const SSH: &str = "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/sec_usr_ssh/configuration/15-mt/sec-usr-ssh-15-mt-book/sec-secure-shell-v2.html";
 const BANNER: &str = "https://www.cisco.com/c/en/us/td/docs/ios/fundamentals/configuration/guide/TIPs_Conversion/cf_15_1s_book/cf_connections.html";
@@ -128,9 +130,20 @@ pub fn specs() -> Vec<CommandSpec> {
         v.push(CommandSpec{id,name_en:en,name_vi:vi,topic:"Basics and security",syntax,mode,capability:Capability::Basic,parameters,prerequisites:vec!["Review existing authentication and management access before changing configuration"],verification:vec![verify],source,software:"Classic IOS 15M&T / 15.1S; exact PT implementation untested",removal:None,semantic_validation:false});
     }
     v.push(CommandSpec{id:"basic.save",name_en:"Save startup configuration",name_vi:"Lưu cấu hình khởi động",topic:"Basics and security",syntax:"copy running-config startup-config",mode:"privileged EXEC",capability:Capability::Basic,parameters:vec![],prerequisites:vec!["Review running configuration before replacing startup configuration; device may prompt for destination confirmation"],verification:vec!["show startup-config"],source:FILES,software:"Classic IOS 15M&T; exact PT execution untested",removal:None,semantic_validation:false});
+    v.extend(discovery::specs());
+    v.extend(time::specs());
     v
 }
 pub fn generate(req: &CommandRequest) -> Result<Vec<ModeCommand>, String> {
+    if matches!(req.family.as_str(), "basic.ntp_server" | "basic.ntp_source") {
+        return time::generate(req);
+    }
+    if matches!(
+        req.family.as_str(),
+        "basic.cdp_global" | "basic.cdp_interface"
+    ) {
+        return discovery::generate(req);
+    }
     use ConfigMode::*;
     let result = match req.family.as_str() {
         "basic.save" => vec![at(Exec, "copy running-config startup-config")],

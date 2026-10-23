@@ -4,13 +4,19 @@ use super::{
 };
 use crate::network_values::{NormalizedNetwork, is_valid_interface_name};
 mod interfaces;
+mod ospf;
+mod protocol_controls;
 mod routing;
 mod services;
+mod wan;
 
 pub fn specs() -> Vec<CommandSpec> {
     let mut all = interfaces::specs();
     all.extend(routing::specs());
     all.extend(services::specs());
+    all.extend(wan::specs());
+    all.extend(ospf::specs());
+    all.extend(protocol_controls::specs());
     all
 }
 pub fn generate(req: &CommandRequest) -> Result<Vec<ModeCommand>, String> {
@@ -37,7 +43,26 @@ pub fn generate(req: &CommandRequest) -> Result<Vec<ModeCommand>, String> {
     {
         return Err("Unsafe parameter".into());
     }
-    if req.family.starts_with("router.interface.") {
+    if matches!(
+        req.family.as_str(),
+        "router.rip.version"
+            | "router.rip.passive"
+            | "router.rip.auto_summary"
+            | "router.eigrp.passive"
+            | "router.eigrp.router_id"
+    ) {
+        protocol_controls::generate(req)
+    } else if matches!(
+        req.family.as_str(),
+        "router.ospf.router_id" | "router.ospf.passive" | "router.ospf.reference_bandwidth"
+    ) {
+        ospf::generate(req)
+    } else if matches!(
+        req.family.as_str(),
+        "router.dhcp.relay" | "router.serial.clock" | "router.serial.ppp"
+    ) {
+        wan::generate(req)
+    } else if req.family.starts_with("router.interface.") {
         interfaces::generate(req)
     } else if req.family.starts_with("router.acl.")
         || req.family.starts_with("router.nat.")

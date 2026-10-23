@@ -12,6 +12,10 @@ Source: runtime registry. Packet Tracer execution-tested families: **0**.
 | basic.console | 4 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/sec_usr_cfg/configuration/15-mt/sec-usr-cfg-15-mt-book/sec-cfg-sec-4cli.html) |
 | basic.vty_ssh | 5 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/sec_usr_ssh/configuration/15-mt/sec-usr-ssh-15-mt-book/sec-secure-shell-v2.html) |
 | basic.save | 0 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/config-mgmt/configuration/15mt/config-mgmt-15-mt-book/cm-config-files.html) |
+| basic.cdp_global | 1 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/cdp/command/cdp-cr-book/cdp-cr-a1.html) |
+| basic.cdp_interface | 3 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/cdp/command/cdp-cr-book/cdp-cr-a1.html) |
+| basic.ntp_server | 3 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/bsm/command/bsm-cr-book/bsm-cr-n1.html) |
+| basic.ntp_source | 2 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/bsm/command/bsm-cr-book/bsm-cr-n1.html) |
 | switch.vlan | 4 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst3560/software/release/15-0_1_se/configuration/guide/scg3560/swvlan.html) |
 | switch.port_mode | 5 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst3560/software/release/15-0_1_se/configuration/guide/scg3560/swvlan.html) |
 | switch.access_vlan | 4 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst3560/software/release/15-0_1_se/configuration/guide/scg3560/swvlan.html) |
@@ -32,6 +36,9 @@ Source: runtime registry. Packet Tracer execution-tested families: **0**.
 | switch.default_gateway | 4 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst3560/software/release/15-0_1_se/configuration/guide/scg3560/swipaddr.html) |
 | switch.routed_port | 8 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst3560/software/release/15-0_1_se/configuration/guide/scg3560/swint.html) |
 | switch.ip_routing | 1 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst3560/software/release/15-0_1_se/configuration/guide/scg3560/swiprout.html) |
+| switch.lldp.global | 1 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst2960/software/release/15-2_2_e/configuration/guide/b_1522e_2960_2960c_2960s_2960sf_2960p_cg/m_1522e_int_lldp_2960s_cg.html) |
+| switch.lldp.interface | 5 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst2960/software/release/15-2_2_e/configuration/guide/b_1522e_2960_2960c_2960s_2960sf_2960p_cg/m_1522e_int_lldp_2960s_cg.html) |
+| switch.lldp.timers | 3 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst2960/software/release/15-2_2_e/configuration/guide/b_1522e_2960_2960c_2960s_2960sf_2960p_cg/m_1522e_int_lldp_2960s_cg.html) |
 | router.interface.ipv4 | 3 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/routers/ios/config/17-x/ip-addressing/b-ip-addressing/m_config-ipv4-addr-0.html) |
 | router.interface.ipv6 | 2 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipv6/command/ipv6-cr-book/ipv6-i1.html) |
 | router.interface.link_local | 2 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipv6/command/ipv6-cr-book/ipv6-i1.html) |
@@ -52,8 +59,19 @@ Source: runtime registry. Packet Tracer execution-tested families: **0**.
 | router.nat.interface | 2 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/routers/ios/config/17-x/ip-addressing/b-ip-addressing/m_iadnat-addr-consv-xe.html) |
 | router.dhcp.pool | 4 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/routers/ios/config/17-x/ip-addressing/b-ip-addressing/m_config-dhcp-server-xe.html) |
 | router.dhcp.exclude | 2 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/routers/ios/config/17-x/ip-addressing/b-ip-addressing/m_config-dhcp-server-xe.html) |
+| router.dhcp.relay | 2 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipaddr_dhcp/configuration/15-mt/dhcp-15-mt-book/config-dhcp-relay-agent.html) |
+| router.serial.clock | 4 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/interface/command/ir-cr-book/ir-c2.html) |
+| router.serial.ppp | 3 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/interface/configuration/15-mt/ir-15-mt-book/ir-cfg-ser-if.html) |
+| router.ospf.router_id | 2 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/iproute_ospf/command/iro-cr-book/ospf-i1.html) |
+| router.ospf.passive | 3 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/ios/iproute_pi/command/reference/iri_book/iri_pi1.html) |
+| router.ospf.reference_bandwidth | 2 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/iproute_ospf/command/iro-cr-book/ospf-a1.html) |
+| router.rip.version | 1 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/ios/iproute_rip/command/reference/irr_book/irr_rip.html) |
+| router.rip.passive | 2 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/ios/iproute_pi/command/reference/iri_book/iri_pi1.html) |
+| router.rip.auto_summary | 1 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/ios/iproute_rip/command/reference/irr_book/irr_rip.html) |
+| router.eigrp.passive | 3 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/iproute_eigrp/command/ire-cr-book/ire-i1.html) |
+| router.eigrp.router_id | 2 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/ios/iproute_eigrp/command/reference/ire_book/ire_a1.html) |
 
-Documented/recognized registry entries: 48; executable required-field examples: 48. Examples are synthetic, not grading or simulation certification.
+Documented/recognized registry entries: 66; executable required-field examples: 66. Examples are synthetic, not grading or simulation certification.
 
-Warm synthetic config parsing: 17.984 ms / 1000 parses. Single-machine measurement, not a cross-machine guarantee.
-Warm synthetic plan generation (basic.hostname): 7.677 ms / 1000 plans.
+Warm synthetic config parsing: 14.144 ms / 1000 parses. Single-machine measurement, not a cross-machine guarantee.
+Warm synthetic plan generation (basic.hostname): 3.543 ms / 1000 plans.

@@ -3,6 +3,7 @@
 use crate::model::{Checkpoint, Command};
 pub(crate) mod assessment;
 mod assignment;
+mod conflicts;
 pub(crate) fn checkpoint_vlan(c: &Checkpoint) -> Option<u16> {
     assignment::vlan_context(c)
 }
@@ -30,7 +31,12 @@ pub(crate) fn ipv6_address_context(path: &str) -> bool {
 /// Preserve raw labels while resolving documented address-field context.
 pub(crate) fn property_key(c: &Checkpoint) -> String {
     let p = key(&c.property);
+    if let Some(scoped) = assessment::scoped_property(c, &p) {
+        return scoped;
+    }
     match p.as_str() {
+        "ospfconfiguredrouterid" => "ospfrouterid".into(),
+        "eigrpconfiguredrouterid" => "eigrprouterid".into(),
         "ipaddress" if ipv6_address_context(&c.path) => "ipv6address".into(),
         "prefixlength" if ipv6_address_context(&c.path) => "ipv6prefixlength".into(),
         "linklocal" => "ipv6linklocal".into(),
@@ -956,16 +962,44 @@ fn interface_order(p: &Plan) -> u8 {
 }
 
 fn conflict_key(c: &Checkpoint, p: &Plan) -> Option<String> {
-    let mut canonical = p.clone();
-    for context in &mut canonical.context {
-        if let Some(interface) = context
-            .strip_prefix("interface ")
-            .and_then(crate::cisco::parser::interface_name)
-        {
-            *context = format!("interface {interface}");
-        }
-    }
+    let canonical = conflicts::canonical(p);
     let p = &canonical;
+    if p.lines.iter().any(|line| {
+        matches!(
+            line.as_str(),
+            "lldp transmit" | "no lldp transmit" | "lldp receive" | "no lldp receive"
+        )
+    }) {
+        return Some(format!("{}:lldp-port-state", p.context.join("/")));
+    }
+    if p.lines.iter().any(|line| {
+        line.starts_with("lldp holdtime ")
+            || line.starts_with("lldp reinit ")
+            || line.starts_with("lldp timer ")
+    }) {
+        return Some(format!("{}:lldp-timers", p.context.join("/")));
+    }
+    if p.context.iter().any(|mode| mode == "router rip")
+        && p.lines.iter().any(|line| line.starts_with("version "))
+    {
+        return Some(format!("{}:rip-version", p.context.join("/")));
+    }
+    if property_key(c) == "ntpserver"
+        && let Some(server) = p
+            .lines
+            .iter()
+            .find_map(|line| line.strip_prefix("ntp server "))
+        && let Some(address) = server.split_whitespace().next()
+    {
+        return Some(format!("{}:ntp-server:{address}", p.context.join("/")));
+    }
+    if matches!(
+        property_key(c).as_str(),
+        "rippassiveinterface" | "eigrppassiveinterface" | "ospfpassiveinterface"
+    ) && let Some(interface) = crate::cisco::parser::interface_name(&c.interface)
+    {
+        return Some(format!("{}:passive:{interface}", p.context.join("/")));
+    }
     if p.lines
         .iter()
         .any(|line| line.starts_with("encapsulation dot1Q "))
@@ -1020,7 +1054,12 @@ fn conflict_key(c: &Checkpoint, p: &Plan) -> Option<String> {
         }
     }
     match property.as_str() {
-        "eigrpnetwork" | "dhcpexcludedaddress" | "save" | "saveconfiguration" => return None,
+        "eigrpnetwork"
+        | "dhcpexcludedaddress"
+        | "save"
+        | "saveconfiguration"
+        | "iphelperaddress"
+        | "dhcprelayaddress" => return None,
         "staticroute" | "ipv4staticroute" => {
             property = format!("route:{} {}", t.first()?, t.get(1)?)
         }
@@ -1067,8 +1106,30 @@ fn conflict_key(c: &Checkpoint, p: &Plan) -> Option<String> {
 }
 
 fn conflict_value(c: &Checkpoint, p: &Plan) -> String {
-    if key(&c.property) == "ripnetwork" {
-        p.lines.first().cloned().unwrap_or_default()
+    if matches!(property_key(c).as_str(), "ripnetwork" | "ripversion") {
+        p.lines
+            .iter()
+            .find(|line| line.starts_with("version "))
+            .cloned()
+            .unwrap_or_default()
+    } else if matches!(
+        property_key(c).as_str(),
+        "rippassiveinterface" | "eigrppassiveinterface" | "ospfpassiveinterface"
+    ) {
+        p.lines
+            .iter()
+            .find_map(|line| {
+                let (prefix, name) = if let Some(name) = line.strip_prefix("passive-interface ") {
+                    ("", name)
+                } else {
+                    ("no ", line.strip_prefix("no passive-interface ")?)
+                };
+                Some(format!(
+                    "{prefix}passive-interface {}",
+                    crate::cisco::parser::interface_name(name)?
+                ))
+            })
+            .unwrap_or_default()
     } else {
         p.lines.join("\n")
     }
@@ -1132,6 +1193,7 @@ pub fn device_script(checkpoints: &[Checkpoint], device: Option<&str>) -> String
             output.push_str("! Skipped conflicting device identity/profile evidence; inspect individual requirements.\n");
             continue;
         }
+        let discovery_conflicts = conflicts::discovery_states(&items);
         let mut values: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for c in &items {
             if let Some(p) = conflict_plan(c)
@@ -1149,6 +1211,12 @@ pub fn device_script(checkpoints: &[Checkpoint], device: Option<&str>) -> String
         let mut conflicts = 0;
         for c in &items {
             if conflict_plan(c)
+                .is_some_and(|p| conflicts::discovery_affected(&p, &discovery_conflicts))
+            {
+                conflicts += 1;
+                continue;
+            }
+            if conflict_plan(c)
                 .and_then(|p| conflict_key(c, &p))
                 .is_some_and(|k| values.get(&k).is_some_and(|v| v.len() > 1))
             {
@@ -1158,7 +1226,7 @@ pub fn device_script(checkpoints: &[Checkpoint], device: Option<&str>) -> String
             let command = generate(c);
             if command.supported && !command.gui {
                 if let Ok(p) = plan(c)
-                    && unique_plans.insert(p.clone())
+                    && unique_plans.insert(conflicts::canonical(&p))
                 {
                     plans.push(p);
                 }

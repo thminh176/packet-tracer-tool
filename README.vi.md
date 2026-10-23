@@ -1,6 +1,6 @@
 # Packet Tracer Tool
 
-Bản 0.2.1 đang phát triển: sửa ánh xạ IPv6 forwarding, thêm IPv6 enable/SLAAC và bổ sung VLAN rõ ràng cho dot1Q. Thư viện có 48 nhóm lệnh giới hạn; chưa chứng nhận thực thi trên thiết bị Packet Tracer. Xem [bằng chứng kiểm thử](docs/TEST_RESULTS.md).
+Phiên bản 0.2.2: 66 nhóm chức năng giới hạn, thêm NTP IPv4/IPv6, LLDP, tùy chọn RIP/EIGRP và đối chiếu cấu hình rõ ràng theo process. Chưa chứng nhận thực thi trên thiết bị Packet Tracer. Xem [kiểm thử](docs/TEST_RESULTS.md), [lệnh và nguồn tham khảo](docs/CISCO_PROTOCOL_CONTROLS.md) và [nghiên cứu Cisco](docs/CISCO_EXPANSION_RESEARCH.md). Bao gồm các sửa lỗi tiêu chí IPv6 và dot1Q đã phát triển cho 0.2.1.
 
 [English](README.md) · [Tải bản Windows](https://github.com/thminh176/packet-tracer-tool/releases)
 

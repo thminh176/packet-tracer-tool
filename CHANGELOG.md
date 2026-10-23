@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.2 — NTP, LLDP and classic routing controls (2026-10-23)
+
+- Extend to 66 bounded workflows with shared IPv4/IPv6 NTP server handling, NTP source, LLDP global/port/timers and standalone RIP/EIGRP controls.
+- Add eight configured-state comparison subsets, raising the declared catalog total to 26; require explicit process/AS, unique current-device evidence and correct IOS modes.
+- Keep generic/active Router ID Unverified from running-config alone; only explicitly configured-ID requirements enter that comparison subset.
+- Resolve generic Version/Router ID leaves only through a unique protocol category below the device. Preserve raw evidence and never infer process IDs from numeric tree labels.
+- Preserve independent passive interfaces/NTP servers, block contradictory RIP versions and discovery states, and deduplicate equivalent interface aliases in grouped scripts.
+- Clear stale Library parameters when search or manual selection changes command families; retain drafts when staying in the same family.
+- Keep synchronization, LLDP discovery/grading and all real Packet Tracer execution certification outside these tested synthetic subsets.
+
+## 0.2.2-dev — Cisco service coverage (unreleased)
+
+- Add explicit DHCP relay, DCE serial clock, synchronous PPP, global/interface CDP, and OSPFv2 router ID/passive/reference-bandwidth workflows; 56 bounded families in total.
+- Require explicit process IDs, hardware/cable/peer assertions and correct configuration modes. Additional checkpoint aliases are synthetically tested; automatic validation for these eight new families remains unsupported.
+- Preserve multiple DHCP relay servers; transfer incomplete supported requirements into the bilingual Library without invented context.
+- Add an original research matrix covering 14 expansion topics with 23 Cisco source URLs, separating classic IOS, IOS XE and Packet Tracer execution evidence.
+
 ## 0.2.1 — IPv6 assessment and dot1Q context fixes
 
 - Map the explicit IPv6 Unicast Routing Boolean to global IOS configuration; reject unknown numeric enums and incorrect device/interface scope.
