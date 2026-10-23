@@ -35,6 +35,8 @@ pub(crate) fn property_key(c: &Checkpoint) -> String {
         return scoped;
     }
     match p.as_str() {
+        "ospfconfiguredrouterid" => "ospfrouterid".into(),
+        "eigrpconfiguredrouterid" => "eigrprouterid".into(),
         "ipaddress" if ipv6_address_context(&c.path) => "ipv6address".into(),
         "prefixlength" if ipv6_address_context(&c.path) => "ipv6prefixlength".into(),
         "linklocal" => "ipv6linklocal".into(),

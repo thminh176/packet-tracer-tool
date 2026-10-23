@@ -4,6 +4,7 @@
 
 - Extend to 66 bounded workflows with shared IPv4/IPv6 NTP server handling, NTP source, LLDP global/port/timers and standalone RIP/EIGRP controls.
 - Add eight configured-state comparison subsets, raising the declared catalog total to 26; require explicit process/AS, unique current-device evidence and correct IOS modes.
+- Keep generic/active Router ID Unverified from running-config alone; only explicitly configured-ID requirements enter that comparison subset.
 - Resolve generic Version/Router ID leaves only through a unique protocol category below the device. Preserve raw evidence and never infer process IDs from numeric tree labels.
 - Preserve independent passive interfaces/NTP servers, block contradictory RIP versions and discovery states, and deduplicate equivalent interface aliases in grouped scripts.
 - Clear stale Library parameters when search or manual selection changes command families; retain drafts when staying in the same family.

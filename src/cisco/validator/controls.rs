@@ -3,6 +3,13 @@ use super::*;
 use crate::cisco::{self, CommandRequest};
 pub(super) fn validate(c: &Checkpoint, config: &parser::ParsedConfig) -> Option<ValidationResult> {
     let property = crate::commands::property_key(c);
+    if matches!(property.as_str(), "ospfrouterid" | "eigrprouterid")
+        && !c.property.to_ascii_lowercase().contains("configured")
+    {
+        return Some(unknown(
+            "Router ID may refer to the active process ID; running configuration alone does not verify it. Only an explicitly configured-router-ID requirement is compared by this subset",
+        ));
+    }
     let (parameter, prefix) = match property.as_str() {
         "ospfrouterid" => ("router_id", "router-id "),
         "ospfreferencebandwidth" => ("mbps", "auto-cost reference-bandwidth "),

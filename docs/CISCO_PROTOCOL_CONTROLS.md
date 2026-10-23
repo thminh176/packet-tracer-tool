@@ -23,6 +23,8 @@ Selected process/AS evidence must still be explicit. A category ending in `OSPF 
 
 ## Configured-state comparison
 
+Generic `Router ID` / `OSPF Router ID` / `EIGRP Router ID` requirements remain Unverified from running-config alone: they may refer to the effective protocol identifier. Only labels explicitly stating `Configured Router ID` enter the configured-ID comparison subset. Both forms may still produce a complete command suggestion with an explicit process/AS. No inferred process restart is offered.
+
 Eight additional declared comparator subsets cover configured OSPF router ID/reference bandwidth/passive state, RIP version/summarization/passive state and EIGRP ID/passive state. Comparisons require unique current snapshot/device ownership, complete compatible requirements and one explicit value in the correct routing process. Missing, duplicate, invalid, conflicting or default-only evidence remains Unverified. Interface aliases are normalized only through the explicit interface parser. Configured router ID equality does not certify an effective ID or adjacency state.
 
 NTP synchronization, LLDP neighbor discovery and LLDP saved-state grading are not evaluated by these additions. There are **26 declared semantic subsets** across the full catalog and **zero actual Packet Tracer execution-certified families**. Cisco IOS references are not simulated-device certification.

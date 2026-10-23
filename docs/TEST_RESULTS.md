@@ -2,6 +2,8 @@
 
 ## 0.2.2-dev.2 protocol coverage (unreleased)
 
+Router-ID comparison is restricted to requirements explicitly labeled as configured IDs. Generic/active Router ID stays Unverified from running-config alone even when a command suggestion is complete. The source-backed distinction prevents a configured OSPF ID from being mistaken for an already active protocol ID.
+
 The native Windows x64 build opens the four-checkpoint original synthetic fixture with four explicit matches. Library search switches from hostname to NTP without stale fields; IPv6 server entry blocks script generation until explicit version 4 is supplied. The resulting NTP script was copied and read back from the Windows clipboard exactly. A regression test also checks that a same-family draft is retained. This is application smoke evidence, not a simulator execution test.
 
 `cargo test --locked`: **244 passed, 0 failed, 1 opt-in private test ignored**. Strict all-target Clippy and formatting checks pass. The 10 LLDP worker tests plus 14 protocol/control tests cover source prerequisites, typed fields, profile/mode limits, positive/negative states, IPv6 NTP version requirements, malformed input, correct process identity, semantic aliases and conflict handling. A synthetic full comparison verifies two matching, one mismatching and one incomplete requirement with weighted accounting; this is not native Cisco grading.

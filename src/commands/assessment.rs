@@ -46,10 +46,10 @@ pub(crate) fn scoped_property(c: &Checkpoint, property: &str) -> Option<String> 
         return None;
     }
     let name = match (protocol, property) {
-        ("ospf", "routerid") => "ospfrouterid",
+        ("ospf", "routerid" | "configuredrouterid") => "ospfrouterid",
         ("ospf", "referencebandwidth") => "ospfreferencebandwidth",
         ("ospf", "passiveinterface") => "ospfpassiveinterface",
-        ("eigrp", "routerid") => "eigrprouterid",
+        ("eigrp", "routerid" | "configuredrouterid") => "eigrprouterid",
         ("eigrp", "passiveinterface") => "eigrppassiveinterface",
         ("rip", "version") => "ripversion",
         ("rip", "passiveinterface") => "rippassiveinterface",

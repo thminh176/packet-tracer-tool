@@ -217,7 +217,7 @@ fn classic_eigrp_requires_a_real_as_and_valid_identifier_not_an_interface_ip() {
 fn explicit_routing_scalars_are_verified_in_the_correct_process_only() {
     for (property, expected, metadata, mode, line, different) in [
         (
-            "OSPF Router ID",
+            "OSPF Configured Router ID",
             "192.0.2.9",
             "process_id=20",
             "ospf 20",
@@ -233,7 +233,7 @@ fn explicit_routing_scalars_are_verified_in_the_correct_process_only() {
             "auto-cost reference-bandwidth 100",
         ),
         (
-            "EIGRP Router ID",
+            "EIGRP Configured Router ID",
             "192.0.2.9",
             "as_number=100",
             "eigrp 100",
@@ -329,7 +329,7 @@ fn passive_comparison_canonicalizes_interface_aliases_without_inferring_defaults
 }
 #[test]
 fn missing_conflicting_unknown_and_wrong_identity_never_gain_verification() {
-    let mut c = checkpoint("OSPF Router ID", "192.0.2.9");
+    let mut c = checkpoint("OSPF Configured Router ID", "192.0.2.9");
     c.evidence.push("commands:parameter:process_id=20".into());
     let config = "router ospf 20\n router-id 192.0.2.9\n!";
     assert_eq!(
@@ -406,12 +406,12 @@ fn comparison_pipeline_scores_only_explicit_supported_synthetic_controls() {
     };
     let mut version = checkpoint("RIP Version", "2");
     version.weight = 3.0;
-    let mut router_id = checkpoint("OSPF Router ID", "192.0.2.9");
+    let mut router_id = checkpoint("OSPF Configured Router ID", "192.0.2.9");
     router_id.weight = 2.0;
     router_id
         .evidence
         .push("commands:parameter:process_id=20".into());
-    let mut missing = checkpoint("EIGRP Router ID", "192.0.2.9");
+    let mut missing = checkpoint("EIGRP Configured Router ID", "192.0.2.9");
     missing.weight = 5.0;
     let mut summary = checkpoint("RIP Auto Summary", "false");
     summary.weight = 7.0;
@@ -513,6 +513,11 @@ fn generic_assessment_labels_require_one_protocol_category_not_exact_ios_names()
             .text
             .contains("router ospf 20\nrouter-id 192.0.2.9\n")
     );
+    assert_eq!(
+        status(&c, "router ospf 20\n router-id 192.0.2.9\n!"),
+        Status::Unverified
+    );
+    c.property = "Configured Router ID".into();
     assert_eq!(
         status(&c, "router ospf 20\n router-id 192.0.2.9\n!"),
         Status::Passed
