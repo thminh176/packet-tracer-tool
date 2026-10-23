@@ -68,6 +68,38 @@ pub fn specs() -> Vec<CommandSpec> {
             Capability::Ipv6Routing,
         ),
         (
+            "router.interface.ipv6_enable",
+            "Enable IPv6 processing on interface",
+            "Bật xử lý IPv6 trên cổng",
+            "ipv6 enable",
+            vec![param(
+                "enabled",
+                ParameterKind::Choice(&["true"]),
+                true,
+                "Explicit enablement only; removal requires separate review",
+                "Chỉ bật rõ ràng; thao tác gỡ cần xem xét riêng",
+                "true",
+            )],
+            IPV6,
+            Capability::Ipv6Routing,
+        ),
+        (
+            "router.interface.ipv6_autoconfig",
+            "Enable IPv6 stateless address autoconfiguration",
+            "Bật tự cấu hình địa chỉ IPv6 SLAAC",
+            "ipv6 address autoconfig",
+            vec![param(
+                "enabled",
+                ParameterKind::Choice(&["true"]),
+                true,
+                "Explicit SLAAC enablement; does not prove a router advertisement was received",
+                "Bật SLAAC rõ ràng; không chứng minh đã nhận router advertisement",
+                "true",
+            )],
+            IPV6,
+            Capability::Ipv6Routing,
+        ),
+        (
             "router.interface.description",
             "Describe interface",
             "Mô tả cổng",
@@ -141,6 +173,12 @@ pub fn specs() -> Vec<CommandSpec> {
         if id == "router.interface.dot1q" {
             prerequisites.push("Parent Ethernet interface must be operational; peer trunk VLAN/native configuration must match");
         }
+        if id == "router.interface.ipv6_autoconfig" {
+            prerequisites.push("An IPv6 router advertising a usable prefix must be reachable for address acquisition; no address or default route is invented");
+        }
+        if id == "router.interface.ipv6_enable" {
+            prerequisites.push("Enables IPv6 processing and automatic link-local addressing only; global forwarding is a separate setting");
+        }
         result.push(spec(
             id,
             en,
@@ -156,7 +194,14 @@ pub fn specs() -> Vec<CommandSpec> {
             },
             "Cisco classic IOS (command reference); interface descriptions IOS 15M&T",
             prerequisites,
-            vec!["show interfaces", "show running-config"],
+            if matches!(
+                id,
+                "router.interface.ipv6_enable" | "router.interface.ipv6_autoconfig"
+            ) {
+                vec!["show ipv6 interface", "show running-config"]
+            } else {
+                vec!["show interfaces", "show running-config"]
+            },
         ));
     }
     result
@@ -215,6 +260,17 @@ pub fn generate(req: &CommandRequest) -> Result<Vec<ModeCommand>, String> {
                 return Err("Link-local address must be FE80::/10".into());
             }
             format!("ipv6 address {ip} link-local")
+        }
+        "router.interface.ipv6_enable" | "router.interface.ipv6_autoconfig" => {
+            router_device(req)?;
+            if req.required("enabled")? != "true" {
+                return Err("Only explicit IPv6 enablement is supported by this workflow".into());
+            }
+            if req.family == "router.interface.ipv6_enable" {
+                "ipv6 enable".into()
+            } else {
+                "ipv6 address autoconfig".into()
+            }
         }
         "router.interface.description" => {
             let description = req.required("description")?;

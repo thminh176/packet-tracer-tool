@@ -1,5 +1,17 @@
 # Verification and known limits
 
+## v0.2.1 local patch, 2026-10-23
+
+`cargo test --locked`: **209 passed, 0 failed, 1 private opt-in test ignored**; the vendor codec separately passes **18 tests**. Formatting, strict all-target Clippy, the Windows x64 MSVC release build and dependency license/source checks pass. The dependency audit reports zero vulnerabilities, with informational unmaintained advisories retained.
+
+The rebuilt native Windows GUI opened the original four-checkpoint IPv6/dot1Q fixture and displayed four explicit matches. Its individual IPv6 forwarding copy action was read back from the Windows clipboard and matched the global IOS script exactly. This is a synthetic application smoke test, not an actual Packet Tracer device test.
+
+Regression coverage includes scoped IPv6 Boolean mapping and explicit comparison, distinct interface enable/SLAAC commands, optional XML fields versus IOS evidence, dot1Q sibling selection, conflicting encapsulation requests and incomplete-parameter transfer into the Library. The original public `tests/fixtures/ipv6-dot1q.xml` deliberately uses subinterface suffix .77 and VLAN 42.
+
+The same 32 permitted private copies contain 15 IPv6 forwarding requirements: command-ready counts improved from 0 to 15. Six EthernetEncapProcess objects have no selected VLAN sibling and remain incomplete; ten of fourteen explicit dot1Q VLAN leaves are command-ready, unchanged. These are generation results, not passing grades or Packet Tracer execution certification. Private files and decoded values are excluded from Git and packages.
+
+The registry now contains 48 bounded families and 18 declared semantic subsets. No family has new actual Packet Tracer execution evidence. Historical counts below describe earlier builds.
+
 ## v0.2.0 final local candidate, 2026-10-23
 
 `cargo test --locked`: **199 passed, 0 failed, 1 explicitly opt-in real-file test ignored**. The vendored codec suite separately passes **18 tests** (217 total passing). Formatting and strict all-target Clippy pass. Conditional VLAN tests reject contradictory mode, active-VLAN and peer evidence, preserve Unverified status, and keep the typed library prerequisite workflow strict. Dot1Q takes its explicit VLAN requirement rather than a subinterface suffix.

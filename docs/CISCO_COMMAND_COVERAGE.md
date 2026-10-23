@@ -35,10 +35,12 @@ Source: runtime registry. Packet Tracer execution-tested families: **0**.
 | router.interface.ipv4 | 3 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/routers/ios/config/17-x/ip-addressing/b-ip-addressing/m_config-ipv4-addr-0.html) |
 | router.interface.ipv6 | 2 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipv6/command/ipv6-cr-book/ipv6-i1.html) |
 | router.interface.link_local | 2 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipv6/command/ipv6-cr-book/ipv6-i1.html) |
+| router.interface.ipv6_enable | 2 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipv6/command/ipv6-cr-book/ipv6-i1.html) |
+| router.interface.ipv6_autoconfig | 2 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipv6/command/ipv6-cr-book/ipv6-i1.html) |
 | router.interface.description | 2 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/lanswitch/configuration/15-mt/lsw-15-mt-book/lsw-hwic-ethsw-ic.html) |
 | router.interface.shutdown | 2 | true | true | [reference](https://www.cisco.com/E-Learning/bulk/public/tac/cim/cib/using_cisco_ios_software/cmdrefs/shutdown.htm) |
-| router.interface.dot1q | 3 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/routers/ios/config/17-x/lan-wan/b-lan-wan/m_lsw-conf-rout-vlan.html) |
-| router.ipv6.routing | 1 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipv6/command/ipv6-cr-book/ipv6-i5.html) |
+| router.interface.dot1q | 3 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/routers/ios/config/17-x/lan-wan/b-lan-wan/m_lsw-conf-rout-vlan.html) |
+| router.ipv6.routing | 1 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipv6/command/ipv6-cr-book/ipv6-i5.html) |
 | router.route.ipv4 | 1 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/iproute_pi/command/iri-cr-book/iri-cr-a1.html) |
 | router.route.ipv6 | 1 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/routers/ios/config/17-x/ip-routing/b-ip-routing/m_ip6-route-static-xe.html) |
 | router.ospf.network | 3 | true | true | [reference](https://www.cisco.com/c/en/us/td/docs/routers/ios/config/17-x/ip-routing/b-ip-routing/m_iro-cfg-0.html) |
@@ -51,7 +53,7 @@ Source: runtime registry. Packet Tracer execution-tested families: **0**.
 | router.dhcp.pool | 4 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/routers/ios/config/17-x/ip-addressing/b-ip-addressing/m_config-dhcp-server-xe.html) |
 | router.dhcp.exclude | 2 | true | false | [reference](https://www.cisco.com/c/en/us/td/docs/routers/ios/config/17-x/ip-addressing/b-ip-addressing/m_config-dhcp-server-xe.html) |
 
-Documented/recognized registry entries: 46; executable synthetic examples with explicit context: 46. Examples are synthetic, not grading or simulation certification.
+Documented/recognized registry entries: 48; executable required-field examples: 48. Examples are synthetic, not grading or simulation certification.
 
-Warm synthetic config parsing: 1.391 ms / 1000 parses. Single-machine measurement, not a cross-machine guarantee.
-Warm synthetic plan generation (basic.hostname): 0.774 ms / 1000 plans.
+Warm synthetic config parsing: 17.984 ms / 1000 parses. Single-machine measurement, not a cross-machine guarantee.
+Warm synthetic plan generation (basic.hostname): 7.677 ms / 1000 plans.

@@ -90,3 +90,78 @@ fn trunk_assignments_are_conditional_and_reject_explicit_conflicts() {
         assert!(!commands::generate(&c).supported);
     }
 }
+
+#[test]
+fn dot1q_verification_requires_unique_explicit_target_configuration() {
+    use pka_lab_inspector::cisco::validator::{DeviceObservation, validate};
+    let c = checkpoint(
+        "VLAN ID",
+        "42",
+        "Network / Lab-Router / Ports / GigabitEthernet0/0.77 / 802.1Q / VLAN ID",
+    );
+    for (config, status) in [
+        (
+            "interface Gi0/0.77\n encapsulation dot1Q 42\n!",
+            Status::Passed,
+        ),
+        (
+            "interface Gi0/0.77\n encapsulation dot1Q 43\n!",
+            Status::Failed,
+        ),
+        (
+            "interface Gi0/0.42\n encapsulation dot1Q 42\n!",
+            Status::Unverified,
+        ),
+        (
+            "interface Gi0/0.77\n encapsulation dot1Q 42\n encapsulation dot1Q 43\n!",
+            Status::Unverified,
+        ),
+        (
+            "interface Gi0/0.77\n encapsulation dot1Q 4095\n!",
+            Status::Unverified,
+        ),
+    ] {
+        let observation = DeviceObservation {
+            device: "Lab-Router",
+            unique_current_snapshot: true,
+            unique_device: true,
+            configuration: config,
+        };
+        assert_eq!(validate(&c, &observation).status, status, "{config}");
+    }
+    let mut other = c.clone();
+    other.evidence.push("commands:parameter:vlan=43".into());
+    assert_eq!(
+        validate(
+            &other,
+            &DeviceObservation {
+                device: "Lab-Router",
+                unique_current_snapshot: true,
+                unique_device: true,
+                configuration: "interface Gi0/0.77\n encapsulation dot1Q 42\n!"
+            }
+        )
+        .status,
+        Status::Unverified
+    );
+}
+
+#[test]
+fn incompatible_dot1q_checkpoints_are_omitted_together() {
+    let mut object = checkpoint(
+        "Encapsulation",
+        "EthernetEncapProcess",
+        "Network / Lab-Router / Ports / GigabitEthernet0/0.77 / Encapsulation",
+    );
+    object.evidence.push("commands:parameter:vlan=42".into());
+    let mut vlan = checkpoint(
+        "VLAN ID",
+        "42",
+        "Network / Lab-Router / Ports / GigabitEthernet0/0.77 / 802.1Q / VLAN ID",
+    );
+    let script = commands::device_script(&[object.clone(), vlan.clone()], None);
+    assert_eq!(script.matches("encapsulation dot1Q 42").count(), 1);
+    vlan.expected = "43".into();
+    let script = commands::device_script(&[object, vlan], None);
+    assert!(!script.contains("encapsulation dot1Q"), "{script}");
+}

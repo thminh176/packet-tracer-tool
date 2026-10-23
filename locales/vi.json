@@ -300,6 +300,9 @@
                      "cisco.class.missing":  "Đã nhận diện: còn thiếu tham số",
                      "detail.ospf_process_required": "OSPF dùng router ospf và network ... area ..., không phải ip route. Hãy nhập process ID rõ ràng trong Thư viện lệnh; số trong cây tiêu chí chưa phải bằng chứng xác minh process ID.",
                      "detail.open_command_library": "Bổ sung tham số trong Thư viện lệnh",
-                     "explanation.ospf_required": "OSPF cần process ID, mạng, wildcard và area rõ ràng; ứng dụng không tự suy diễn giá trị mặc định"
+                     "explanation.ospf_required": "OSPF cần process ID, mạng, wildcard và area rõ ràng; ứng dụng không tự suy diễn giá trị mặc định",
+                     "detail.dot1q_required": "802.1Q cần subinterface Ethernet và VLAN ID rõ ràng. Hãy bổ sung VLAN còn thiếu trong Thư viện lệnh; đuôi subinterface không tự động là số VLAN.",
+                     "explanation.ipv6_disabled": "Tắt chuyển tiếp IPv6 ảnh hưởng toàn bộ lưu lượng IPv6 đi qua thiết bị này. Hãy xem xét trước khi áp dụng; ứng dụng chưa thực thi lệnh nào.",
+                     "explanation.ipv6_boolean": "Trường Boolean IPv6 này cần 1/0 hoặc true/false; các mã số chưa rõ ý nghĩa chưa được hỗ trợ"
                  }
 }

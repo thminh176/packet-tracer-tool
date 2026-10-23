@@ -20,7 +20,7 @@ fn script(family: &str, pairs: &[(&str, &str)]) -> String {
 #[test]
 fn registry_has_unique_documented_router_families_with_bilingual_fields() {
     let specs = router::specs();
-    assert_eq!(specs.len(), 18);
+    assert_eq!(specs.len(), 20);
     let mut ids = HashSet::new();
     for spec in specs {
         assert!(ids.insert(spec.id), "duplicate {}", spec.id);

@@ -1,5 +1,7 @@
 # Packet Tracer Tool
 
+Bản 0.2.1 đang phát triển: sửa ánh xạ IPv6 forwarding, thêm IPv6 enable/SLAAC và bổ sung VLAN rõ ràng cho dot1Q. Thư viện có 48 nhóm lệnh giới hạn; chưa chứng nhận thực thi trên thiết bị Packet Tracer. Xem [bằng chứng kiểm thử](docs/TEST_RESULTS.md).
+
 [English](README.md) · [Tải bản Windows](https://github.com/thminh176/packet-tracer-tool/releases)
 
 **Ứng dụng desktop song ngữ độc lập hỗ trợ học, xem, đối chiếu và tìm lỗi trong bài lab Packet Tracer.** Giao diện có tên PKA Lab Inspector, viết bằng Rust / egui, chạy ngoại tuyến trên Windows x86_64, không cần Python.

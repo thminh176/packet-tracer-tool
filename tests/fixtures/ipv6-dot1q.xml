@@ -1,0 +1,14 @@
+<PACKETTRACER5_ACTIVITY>
+  <!-- Original synthetic data. Not Cisco courseware or an answer key. -->
+  <PACKETTRACER5 role="current"><NETWORK><DEVICES><DEVICE><ENGINE><NAME>Lab-Router</NAME><TYPE>Router</TYPE><PORT><NAME>GigabitEthernet0/0.77</NAME></PORT></ENGINE><RUNNINGCONFIG><LINE>hostname Lab-Router</LINE><LINE>ipv6 unicast-routing</LINE><LINE>interface GigabitEthernet0/0.77</LINE><LINE> encapsulation dot1Q 42</LINE><LINE> ipv6 enable</LINE><LINE>!</LINE></RUNNINGCONFIG></DEVICE></DEVICES></NETWORK></PACKETTRACER5>
+  <COMPARISONS><NODE><NAME headNode="true">Network</NAME><ID>Network</ID>
+    <NODE><NAME headNode="true">Lab-Router</NAME><ID>Lab-Router</ID>
+      <NODE><NAME headNode="false" checkType="2" nodeValue="1">IPv6 Unicast Routing</NAME><ID>IPv6 Unicast Routing</ID><POINTS>1</POINTS></NODE>
+      <NODE><NAME headNode="true">Ports</NAME><ID>Ports</ID><NODE><NAME headNode="true">GigabitEthernet0/0.77</NAME><ID>GigabitEthernet0/0.77</ID>
+        <NODE><NAME headNode="false" checkType="2" nodeValue="EthernetEncapProcess">Encapsulation</NAME><ID>Encapsulation</ID><POINTS>1</POINTS></NODE>
+        <NODE><NAME headNode="true">802.1Q</NAME><ID>802.1Q</ID><NODE><NAME headNode="false" checkType="2" nodeValue="42">VLAN ID</NAME><ID>VLAN ID</ID><POINTS>1</POINTS></NODE></NODE>
+        <NODE><NAME headNode="false" checkType="2" nodeValue="1">IPv6 Enable</NAME><ID>IPv6 Enable</ID><POINTS>1</POINTS></NODE>
+      </NODE></NODE>
+    </NODE>
+  </NODE></COMPARISONS>
+</PACKETTRACER5_ACTIVITY>
