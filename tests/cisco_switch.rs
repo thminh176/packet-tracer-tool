@@ -78,7 +78,7 @@ fn set(req: &CommandRequest, key: &str, value: &str) -> CommandRequest {
 #[test]
 fn every_spec_has_independent_bilingual_metadata_and_a_working_typed_example() {
     let specs = cisco::switch::specs();
-    assert_eq!(specs.len(), 20);
+    assert_eq!(specs.len(), 23);
     let mut ids = std::collections::BTreeSet::new();
     for spec in specs {
         assert!(ids.insert(spec.id));
@@ -89,7 +89,10 @@ fn every_spec_has_independent_bilingual_metadata_and_a_working_typed_example() {
         );
         assert_ne!(spec.name_en, spec.name_vi);
         assert!(!spec.prerequisites.is_empty());
-        assert!(spec.semantic_validation);
+        assert_eq!(
+            spec.semantic_validation,
+            !spec.id.starts_with("switch.lldp.")
+        );
         assert!(!spec.verification.is_empty());
         for p in &spec.parameters {
             assert_ne!(p.description_en, p.description_vi);

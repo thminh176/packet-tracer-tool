@@ -1,5 +1,6 @@
 //! Bounded, documented Catalyst commands. Context is caller evidence, not inferred state.
 mod handlers;
+mod lldp;
 use super::{Capability, CommandSpec, ParameterKind as K, ParameterSpec};
 pub use handlers::generate;
 pub(crate) use handlers::physical as physical_port;
@@ -518,6 +519,7 @@ pub fn specs() -> Vec<CommandSpec> {
     ];
     result.extend(advanced_specs());
     result.extend(ip_specs());
+    result.extend(lldp::specs());
     result
 }
 
