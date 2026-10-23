@@ -1,4 +1,15 @@
-﻿# Packet Tracer Tool v0.2.0 — Cisco Command Coverage
+# Packet Tracer Tool v0.2.1 - IPv6 and dot1Q checkpoint fixes
+
+- Explicit IPv6 Unicast Routing = 1 now generates ipv6 unicast-routing in global configuration mode. Disabling forwarding carries an impact warning.
+- Distinct interface ipv6 enable and ipv6 address autoconfig suggestions require explicit enablement and correct interface context. No hidden address, default route or no shutdown is added.
+- EthernetEncapProcess uses a unique selected dot1Q VLAN in the same port scope, or transfers to the bilingual Command Library for explicit completion. Subinterface suffixes are never VLAN evidence.
+- Conflicting dot1Q requirements are omitted from device scripts. Verification requires a unique current snapshot/device and explicit scoped configuration.
+- 48 bounded families; no new live Packet Tracer execution certification. See TEST_RESULTS.md and V0.2.1_COMMAND_RESEARCH.md.
+
+This describes a local candidate and does not establish GitHub publication.
+
+---
+# Packet Tracer Tool v0.2.0 — Cisco Command Coverage
 
 Independent offline Windows x64 Rust / egui companion for Packet Tracer labs. Not affiliated with or endorsed by Cisco.
 

@@ -59,6 +59,79 @@ pub fn validate(c: &Checkpoint, observation: &DeviceObservation<'_>) -> Validati
         }
     };
     let (actual, equal) = match property.as_str() {
+        "ipv6unicastrouting" if c.interface.is_empty() => {
+            if !super::mapping::request(c, "true")
+                .is_some_and(|req| super::generate(&req).executable())
+            {
+                return unknown("IPv6 forwarding validator requires a compatible router profile");
+            }
+            let Some(required) = crate::commands::assessment::boolean(expected) else {
+                return unknown("Unknown IPv6 forwarding flag");
+            };
+            if super::mapping::parameter_conflict(c, &required.to_string()) {
+                return unknown("Conflicting explicit IPv6 forwarding requirements");
+            }
+            let states: Vec<_> = entries
+                .iter()
+                .filter_map(|line| match *line {
+                    "ipv6 unicast-routing" => Some(true),
+                    "no ipv6 unicast-routing" => Some(false),
+                    _ => None,
+                })
+                .collect();
+            if states.len() != 1 {
+                return unknown(
+                    "No unique explicit IPv6 forwarding state; defaults are not inferred",
+                );
+            }
+            (states[0].to_string(), required == states[0])
+        }
+        "encapsulation" | "vlanid" => {
+            let Ok(resolved) = crate::commands::explicit_value(c) else {
+                return unknown("Unsupported or conflicting encapsulation requirement");
+            };
+            let Some(request) = super::mapping::request(c, &resolved)
+                .filter(|r| r.family == "router.interface.dot1q")
+            else {
+                return unknown("No supported dot1Q assessment context");
+            };
+            if super::mapping::parameter_conflict(c, &resolved)
+                || !super::generate(&request).executable()
+            {
+                return unknown(
+                    "dot1Q requires a valid Ethernet subinterface and explicit unique VLAN ID",
+                );
+            }
+            let Some(required) = request.get("vlan").parse::<u16>().ok() else {
+                return unknown("Missing expected VLAN ID");
+            };
+            let Some(line) = one("encapsulation ") else {
+                return unknown("No unique explicit encapsulation on the target subinterface");
+            };
+            let words: Vec<_> = line.split_whitespace().collect();
+            if !(words.len() == 2 || (words.len() == 3 && words[2] == "native"))
+                || !words[0].eq_ignore_ascii_case("dot1q")
+            {
+                return unknown("Unsupported encapsulation syntax");
+            }
+            let Some(vlan) = words[1]
+                .parse::<u16>()
+                .ok()
+                .filter(|v| (1..=4094).contains(v))
+            else {
+                return unknown("Invalid current VLAN ID");
+            };
+            let native_matches = match request.get("native") {
+                "true" => words.len() == 3,
+                "false" => words.len() == 2,
+                "" => true,
+                _ => return unknown("Unknown required native VLAN option"),
+            };
+            (
+                format!("encapsulation {line}"),
+                vlan == required && native_matches,
+            )
+        }
         "interfacedescription" | "description" if !c.interface.is_empty() => {
             let Some(actual) = one("description ") else {
                 return unknown("No unique explicit interface description");

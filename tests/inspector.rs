@@ -30,6 +30,49 @@ fn activity(leaves: &str, snapshots: &str) -> String {
 }
 
 #[test]
+fn dot1q_object_uses_only_a_unique_selected_vlan_in_the_same_port_scope() {
+    use pka_lab_inspector::commands;
+    let object = leaf("Encap", "Encapsulation", "EthernetEncapProcess", "1");
+    let vlan = leaf("Vlan", "VLAN ID", "42", "1");
+    let snapshot = network("192.0.2.1").replace("GigabitEthernet0/0", "GigabitEthernet0/0.77");
+    let selected = branch("802.1Q", &vlan);
+    for (siblings, ready) in [
+        (selected.clone(), true),
+        (String::new(), false),
+        (branch("802.1Q", &format!("{vlan}{vlan}")), false),
+        (branch("Other", &vlan), false),
+        (
+            branch(
+                "802.1Q",
+                &vlan.replace("checkType=\"2\"", "checkType=\"0\""),
+            ),
+            false,
+        ),
+    ] {
+        let xml = activity(&format!("{object}{siblings}"), &snapshot)
+            .replace("GigabitEthernet0/0</NAME>", "GigabitEthernet0/0.77</NAME>")
+            .replace("GigabitEthernet0/0</ID>", "GigabitEthernet0/0.77</ID>");
+        let a = parse(&xml).unwrap();
+        let c = a
+            .checkpoints
+            .iter()
+            .find(|c| c.property == "Encapsulation")
+            .unwrap();
+        let command = commands::generate(c);
+        assert_eq!(
+            command.supported, ready,
+            "{siblings}: {}; {:?}",
+            command.explanation, a.checkpoints
+        );
+        if ready {
+            assert!(command.text.contains("encapsulation dot1Q 42\n"));
+        }
+        assert!(!command.text.contains("dot1Q 77"));
+        assert_eq!(c.status, Status::Unverified);
+    }
+}
+
+#[test]
 fn ipv6_generic_labels_pair_only_with_explicit_unique_siblings() {
     use pka_lab_inspector::commands;
     let ip = leaf("Address", "IP Address", "2001:db8:feed::5", "2");
@@ -103,7 +146,9 @@ fn ipv6_endpoint_gateway_alias_is_gui_only_and_numeric_states_stay_unknown() {
     };
     let command = commands::generate(&c);
     assert!(command.supported && command.gui);
-    for property in ["Port Status", "Startup Config", "IPv6 Unicast Routing"] {
+    // The explicitly identified IPv6 forwarding Boolean is covered separately.
+    // Other numeric state encodings remain unsupported.
+    for property in ["Port Status", "Startup Config"] {
         let mut c = c.clone();
         c.device_type = "Router".into();
         c.property = property.into();

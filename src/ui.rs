@@ -182,10 +182,10 @@ pub fn detect_protocol(c: &Checkpoint) -> Option<ProtocolBadge> {
     None
 }
 
-/// Carry explicit OSPF network/area into the library without inventing a process.
-fn ospf_library_request(c: &Checkpoint) -> Option<cisco::CommandRequest> {
-    if !commands::is_ospf_network_property(&c.property, &c.path)
-        || cisco::mapping::identity_conflict(c)
+/// Carry explicit checkpoint parameters into the library without filling unknowns.
+fn checkpoint_library_request(c: &Checkpoint) -> Option<cisco::CommandRequest> {
+    if cisco::mapping::identity_conflict(c)
+        || cisco::mapping::parameter_conflict(c, &c.expected)
         || c.evidence.iter().any(|e| {
             e.starts_with("assessment:unsupported")
                 || e.starts_with("assessment:ambiguous")
@@ -198,6 +198,10 @@ fn ospf_library_request(c: &Checkpoint) -> Option<cisco::CommandRequest> {
             .contains("conflict")
     {
         return None;
+    }
+    if !commands::is_ospf_network_property(&c.property, &c.path) {
+        let request = cisco::mapping::request(c, &c.expected)?;
+        return (request.family == "router.interface.dot1q").then_some(request);
     }
     let o = network_values::ParsedOspfNetwork::parse(&c.expected).ok()?;
     let prefix = network_values::wildcard_to_prefix(o.wildcard_mask)?;
@@ -2281,8 +2285,12 @@ impl InspectorApp {
                             if ui.button(tr("action.copy_checkpoint")).clicked() {
                                 copy = Some((cmd.text, format!("{} {}", c.device, c.property)));
                             }
-                        } else if let Some(request) = ospf_library_request(&c) {
-                            ui.label(tr("detail.ospf_process_required"));
+                        } else if let Some(request) = checkpoint_library_request(&c) {
+                            ui.label(tr(if request.family == "router.interface.dot1q" {
+                                "detail.dot1q_required"
+                            } else {
+                                "detail.ospf_process_required"
+                            }));
                             if ui.button(tr("detail.open_command_library")).clicked() {
                                 self.library_search_query.clear();
                                 self.library_device_filter = CiscoDeviceFilter::All;
@@ -4368,7 +4376,7 @@ mod rendering_checks {
         let detail = extract_network_detail(&c).unwrap();
         assert_eq!(detail.area.as_deref(), Some("2"));
         assert_eq!(detail.process_id, None);
-        let mut request = ospf_library_request(&c).unwrap();
+        let mut request = checkpoint_library_request(&c).unwrap();
         assert_eq!(request.get("network"), "198.51.100.0/24");
         assert_eq!(request.get("area"), "2");
         assert!(request.get("process_id").is_empty());
@@ -4382,8 +4390,38 @@ mod rendering_checks {
         unrelated.property = "IP Address".into();
         unrelated.path = "Network / Lab-Router / Ports / GigabitEthernet0/0".into();
         assert_eq!(detect_protocol(&unrelated), None);
-        assert!(ospf_library_request(&unrelated).is_none());
+        assert!(checkpoint_library_request(&unrelated).is_none());
         assert_eq!(c.status, Status::Unverified);
+    }
+
+    #[test]
+    fn dot1q_library_completion_preserves_interface_and_requires_explicit_vlan() {
+        let c = Checkpoint {
+            device: "Lab-Router".into(),
+            device_type: "Router".into(),
+            interface: "GigabitEthernet0/0.77".into(),
+            property: "Encapsulation".into(),
+            expected: "EthernetEncapProcess".into(),
+            path: "Network / Lab-Router / Ports / GigabitEthernet0/0.77 / Encapsulation".into(),
+            ..Default::default()
+        };
+        let mut request = checkpoint_library_request(&c).unwrap();
+        assert_eq!(request.family, "router.interface.dot1q");
+        assert_eq!(request.get("interface"), "GigabitEthernet0/0.77");
+        assert!(request.get("vlan").is_empty());
+        assert!(!cisco::generate(&request).executable());
+        request.parameters.insert("vlan".into(), "42".into());
+        let plan = cisco::generate(&request);
+        assert!(plan.executable());
+        assert!(plan.script().contains("encapsulation dot1Q 42\n"));
+        assert!(!plan.script().contains("dot1Q 77"));
+        assert_eq!(c.status, Status::Unverified);
+        let mut conflict = c.clone();
+        conflict.evidence.extend([
+            "commands:parameter:vlan=42".into(),
+            "commands:parameter:vlan=43".into(),
+        ]);
+        assert!(checkpoint_library_request(&conflict).is_none());
     }
 
     #[test]

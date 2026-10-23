@@ -1,6 +1,7 @@
 //! Conservative, offline CLI suggestions. Complex values use the explicit grammars
 //! documented in `generate`; unknown assessment encodings are never CLI values.
 use crate::model::{Checkpoint, Command};
+pub(crate) mod assessment;
 mod assignment;
 pub(crate) fn checkpoint_vlan(c: &Checkpoint) -> Option<u16> {
     assignment::vlan_context(c)
@@ -215,6 +216,19 @@ pub(crate) fn explicit_value(c: &Checkpoint) -> Result<String, &'static str> {
         return Err("Unsupported assessment check type; no reliable configuration requirement.");
     }
     let property = property_key(c);
+    if matches!(
+        property.as_str(),
+        "ipv6unicastrouting" | "ipv6enable" | "ipv6autoconfig"
+    ) {
+        if (property == "ipv6unicastrouting") != c.interface.is_empty() {
+            return Err(
+                "IPv6 forwarding is global; IPv6 enable/autoconfig require an explicit interface",
+            );
+        }
+        return assessment::boolean(&c.expected)
+            .map(|value| value.to_string())
+            .ok_or("This IPv6 Boolean field requires 1/0 or true/false; unknown numeric enums are unsupported");
+    }
     if property == "ipv6prefixlength" {
         if !number(c.expected.trim(), 0, 128) {
             return Err("Invalid explicit IPv6 prefix length");
@@ -848,7 +862,10 @@ pub fn generate(checkpoint: &Checkpoint) -> Command {
             supported: true,
             gui: false,
             text: render(&[p]),
-            explanation: if assignment::plan(checkpoint).is_some() {
+            explanation: if property_key(checkpoint) == "ipv6unicastrouting" && resolved == "false"
+            {
+                "Disabling IPv6 forwarding affects all IPv6 transit traffic on this device. Review before applying; no commands have been executed.".into()
+            } else if assignment::plan(checkpoint).is_some() {
                 "Requirement-based command suggestion; verify VLAN state and port mode where applicable. Current configuration has not been verified.".into()
             } else {
                 "Review explicit values and device compatibility. Packet Tracer execution support is untested for this suggestion. No commands have been executed.".into()
@@ -949,6 +966,12 @@ fn conflict_key(c: &Checkpoint, p: &Plan) -> Option<String> {
         }
     }
     let p = &canonical;
+    if p.lines
+        .iter()
+        .any(|line| line.starts_with("encapsulation dot1Q "))
+    {
+        return Some(format!("{}:dot1q-encapsulation", p.context.join("/")));
+    }
     // Equal destinations with distinct forwarding targets/distances are valid
     // ECMP or floating static routes, not mutually exclusive scalar settings.
     if is_static_route_property(&c.property, &c.path)

@@ -20,6 +20,7 @@ docs/CISCO_SWITCH_RESEARCH.md
 docs/CISCO_ROUTER_RESEARCH.md
 docs/REAL_FILE_REVIEW.md
 docs/ROUTING_CLASSIFICATION_FIX.md
+docs/V0.2.1_COMMAND_RESEARCH.md
 docs/images/cisco-library-windows.png
 locales/en.json
 locales/vi.json

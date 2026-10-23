@@ -655,7 +655,11 @@ fn semantic_equal(tag: &str, expected: &str, actual: &str) -> Option<bool> {
             expected.parse::<u8>().ok().filter(|p| *p <= 128)?
                 == actual.parse::<u8>().ok().filter(|p| *p <= 128)?,
         ),
-        "POWER" | "IPV6_ENABLED" | "IPV6_ADDRESS_AUTOCONFIG" => {
+        "IPV6_ENABLED" | "IPV6_ADDRESS_AUTOCONFIG" => Some(
+            crate::commands::assessment::boolean(expected)?
+                == crate::commands::assessment::boolean(actual)?,
+        ),
+        "POWER" => {
             let boolean = |s: &str| match s.trim().to_ascii_lowercase().as_str() {
                 "true" => Some(true),
                 "false" => Some(false),
@@ -765,6 +769,7 @@ fn attach_command_context(checks: &mut [Checkpoint]) {
     let mut addresses = HashMap::<(String, String, String), Vec<String>>::new();
     let mut prefixes = HashMap::<(String, String, String), Vec<u8>>::new();
     let mut ipv6_addresses = HashMap::<(String, String, String), Vec<String>>::new();
+    let mut dot1q_vlans = HashMap::<String, Vec<String>>::new();
     let context = |c: &Checkpoint| {
         (
             c.device.clone(),
@@ -777,6 +782,17 @@ fn attach_command_context(checks: &mut [Checkpoint]) {
         )
     };
     for c in checks.iter() {
+        if c.property.eq_ignore_ascii_case("VLAN ID")
+            && c.evidence
+                .iter()
+                .all(|e| e == "assessment:compare" || e.starts_with("assessment:device-model="))
+            && let Some(scope) = crate::commands::assessment::dot1q_scope(c)
+        {
+            dot1q_vlans
+                .entry(scope)
+                .or_default()
+                .push(c.expected.clone());
+        }
         if property_tag(&c.property, &c.path) == Some("IPV6_ADDRESSES")
             && !c.device.is_empty()
             && !c.interface.is_empty()
@@ -864,6 +880,19 @@ fn attach_command_context(checks: &mut [Checkpoint]) {
         }
     }
     for c in checks {
+        if c.property.eq_ignore_ascii_case("Encapsulation")
+            && c.expected == "EthernetEncapProcess"
+            && let Some(scope) = crate::commands::assessment::dot1q_scope(c)
+            && let Some(values) = dot1q_vlans.get(&scope)
+        {
+            if values.len() == 1 {
+                c.evidence
+                    .push(format!("commands:parameter:vlan={}", values[0]));
+            } else {
+                c.evidence
+                    .push("commands:context-conflict=dot1q-vlan".into());
+            }
+        }
         if property_tag(&c.property, &c.path) == Some("IPV6_PREFIX")
             && c.evidence
                 .iter()
@@ -1011,8 +1040,28 @@ fn ios_observations(device: &Node, interface: &str, tag: &str) -> Vec<String> {
         }
         return values;
     }
-    if interface.is_empty() {
-        return Vec::new();
+    if matches!(tag, "IPV6_ENABLED" | "IPV6_ADDRESS_AUTOCONFIG") {
+        let parsed = crate::cisco::parser::parse(&lines.join("\n"));
+        let Some(name) = crate::cisco::parser::interface_name(interface) else {
+            return Vec::new();
+        };
+        if !parsed.reliable {
+            return Vec::new();
+        }
+        return parsed
+            .in_mode(&crate::cisco::ConfigMode::Interface(name))
+            .iter()
+            .filter_map(|line| match (tag, *line) {
+                ("IPV6_ENABLED", "ipv6 enable")
+                | (
+                    "IPV6_ADDRESS_AUTOCONFIG",
+                    "ipv6 address autoconfig" | "ipv6 address autoconfig default",
+                ) => Some("true".into()),
+                ("IPV6_ENABLED", "no ipv6 enable")
+                | ("IPV6_ADDRESS_AUTOCONFIG", "no ipv6 address autoconfig") => Some("false".into()),
+                _ => None,
+            })
+            .collect();
     }
     let mut active = false;
     let mut sections = 0;
@@ -1141,6 +1190,13 @@ fn observations(node: &Node, device: &str, interface: &str, tag: &str) -> Vec<St
     }
     if ports.len() != 1 {
         return Vec::new();
+    }
+    // A port inventory without this optional field is not contradictory evidence.
+    // Duplicate or malformed fields must still fail the consistency check below.
+    if matches!(tag, "IPV6_ENABLED" | "IPV6_ADDRESS_AUTOCONFIG")
+        && !ports[0].children.iter().any(|child| child.tag == tag)
+    {
+        return ios_observations(matching[0], interface, tag);
     }
     if matches!(tag, "IPV6_ADDRESSES" | "IPV6_PREFIX") {
         let Some(addresses) = ports[0].unique_child("IPV6_ADDRESSES") else {

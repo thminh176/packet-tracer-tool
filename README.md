@@ -1,5 +1,7 @@
 # Packet Tracer Tool
 
+Local 0.2.1 development: IPv6 forwarding checkpoint mapping, interface IPv6 enable/SLAAC and explicit dot1Q VLAN completion. The catalog contains 48 bounded families; this does not certify execution on Packet Tracer devices. See [patch evidence](docs/TEST_RESULTS.md).
+
 [Tiếng Việt](README.vi.md) · [Download Windows release](https://github.com/thminh176/packet-tracer-tool/releases) · [Compatibility](docs/COMPATIBILITY.md)
 
 **An independent, bilingual desktop companion for learning, inspecting, validating and troubleshooting Packet Tracer labs.** The inspector UI is named PKA Lab Inspector. Native Rust / egui, offline, Windows x86_64; no Python or external decipher runtime.

@@ -105,6 +105,20 @@ pub fn request(c: &Checkpoint, resolved: &str) -> Option<CommandRequest> {
             put("address", resolved);
             "router.interface.link_local"
         }
+        "ipv6unicastrouting" if c.interface.is_empty() => {
+            put("enabled", resolved);
+            "router.ipv6.routing"
+        }
+        "ipv6enable" if !c.interface.is_empty() => {
+            put("interface", &c.interface);
+            put("enabled", resolved);
+            "router.interface.ipv6_enable"
+        }
+        "ipv6autoconfig" if !c.interface.is_empty() => {
+            put("interface", &c.interface);
+            put("enabled", resolved);
+            "router.interface.ipv6_autoconfig"
+        }
         "vlanid"
             if c.path
                 .split(" / ")

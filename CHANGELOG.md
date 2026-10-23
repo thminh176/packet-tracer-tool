@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.1 — IPv6 assessment and dot1Q context fixes
+
+- Map the explicit IPv6 Unicast Routing Boolean to global IOS configuration; reject unknown numeric enums and incorrect device/interface scope.
+- Add distinct interface IPv6 enable and SLAAC families, with enable-only suggestions and scoped explicit-configuration comparison.
+- Complete EthernetEncapProcess from a unique selected VLAN requirement in the same interface scope; otherwise offer explicit parameter completion in the bilingual Command Library. Never infer VLAN IDs from subinterface suffixes.
+- Detect conflicting encapsulation requests in device scripts and compare only uniquely identified, explicit current dot1Q configurations.
+- Registry now contains 48 bounded families. No additional real Packet Tracer execution compatibility is claimed.
+
 ## 0.2.0 — Cisco Command Coverage
 
 - Add a modular typed registry of 46 bounded command families, explicit device profiles, configuration contexts, prerequisite validation, Cisco source links and read-only verification suggestions.
