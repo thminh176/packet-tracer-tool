@@ -1,6 +1,6 @@
 # Verification and known limits
 
-## 0.2.2-dev.2 protocol coverage (unreleased)
+## 0.2.2 protocol coverage (2026-10-23)
 
 Router-ID comparison is restricted to requirements explicitly labeled as configured IDs. Generic/active Router ID stays Unverified from running-config alone even when a command suggestion is complete. The source-backed distinction prevents a configured OSPF ID from being mistaken for an already active protocol ID.
 

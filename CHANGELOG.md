@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.2-dev.2 — NTP, LLDP and classic routing controls (unreleased)
+## 0.2.2 — NTP, LLDP and classic routing controls (2026-10-23)
 
 - Extend to 66 bounded workflows with shared IPv4/IPv6 NTP server handling, NTP source, LLDP global/port/timers and standalone RIP/EIGRP controls.
 - Add eight configured-state comparison subsets, raising the declared catalog total to 26; require explicit process/AS, unique current-device evidence and correct IOS modes.
