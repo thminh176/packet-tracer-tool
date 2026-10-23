@@ -1,3 +1,12 @@
+# Packet Tracer Tool 0.2.2-dev.2 - Protocol coverage (unreleased)
+
+66 bounded workflows (12 common, 23 switch, 31 router), including NTP IPv4/IPv6/source, LLDP global/port/timers and standalone RIP/EIGRP controls. NTP variants remain one family. Eight configured-state comparator subsets raise the declared total to 26.
+
+Generic Version/Router ID fields require a unique protocol category below the identified device. No process ID or AS is inferred from tree numbers. Device scripts block contradictory RIP versions and discovery states while preserving independent passive ports and NTP servers. Interface aliases deduplicate equivalent blocks.
+
+244 application tests pass (one private opt-in test ignored); see TEST_RESULTS.md and CISCO_PROTOCOL_CONTROLS.md. No LLDP neighbor grading, NTP synchronization proof or real Packet Tracer execution certification is claimed. This is a local development build, not a published stable release.
+
+---
 # Packet Tracer Tool 0.2.2-dev - Cisco services expansion (unreleased)
 
 Adds eight bounded workflows: DHCP relay, serial DCE clock, serial PPP, global and interface CDP, OSPFv2 router ID, passive interface and reference bandwidth. The catalog now has 56 families. Required process, interface, hardware and peer context remain explicit; unknown numeric schema flags are not generalized.

@@ -1,6 +1,6 @@
 # Packet Tracer Tool
 
-Bản 0.2.2-dev đang phát triển: 56 nhóm lệnh giới hạn, gồm IPv6/dot1Q, DHCP relay, Serial DCE/PPP, CDP và các tùy chọn OSPFv2. Chưa chứng nhận thực thi trên thiết bị Packet Tracer. Xem [kiểm thử](docs/TEST_RESULTS.md) và [nghiên cứu Cisco](docs/CISCO_EXPANSION_RESEARCH.md). Bản sửa lỗi 0.2.1 được giữ riêng khỏi nhánh mở rộng này.
+Bản 0.2.2-dev.2 đang phát triển: 66 nhóm chức năng giới hạn, thêm NTP IPv4/IPv6, LLDP, tùy chọn RIP/EIGRP và đối chiếu cấu hình rõ ràng theo process. Chưa chứng nhận thực thi trên thiết bị Packet Tracer. Xem [kiểm thử](docs/TEST_RESULTS.md), [lệnh và nguồn tham khảo](docs/CISCO_PROTOCOL_CONTROLS.md) và [nghiên cứu Cisco](docs/CISCO_EXPANSION_RESEARCH.md). Bản sửa lỗi 0.2.1 được giữ riêng khỏi nhánh mở rộng này.
 
 [English](README.md) · [Tải bản Windows](https://github.com/thminh176/packet-tracer-tool/releases)
 

@@ -23,3 +23,11 @@ The catalog is initialized once and borrowed by hot generation/mapping paths. Pu
 mapping connects explicit properties/path/sibling evidence to typed requests while retaining raw requirements. Command readiness and configuration validation are distinct fields on each checkpoint; aggregate command coverage is computed during background parsing, not on each UI frame. Legacy supported grammars remain guarded adapters while new families move into the registry incrementally.
 
 parser preserves global/interface/router/VLAN/ACL/DHCP/line hierarchy and order, rejects opaque/duplicate mode identities and bounds configuration work. validator handles a deliberately small explicit scalar subset. inspector supplies unique snapshot/device proof before using validators or proving absence; uncertain defaults and contexts stay Unverified. Command generation never executes commands. Reports expose command readiness separately from automatic status and score.
+
+## Protocol controls and discovery expansion (0.2.2-dev.2)
+
+NTP handling lives in src/cisco/basic/time.rs; classic RIP/EIGRP options in router/protocol_controls.rs; Catalyst LLDP in switch/lldp.rs. Mixed IPv4/IPv6 inputs use the typed IpAddress parameter kind. Conditional requirements (IPv6 NTP version 4) remain visible as missing parameters rather than inserted defaults.
+
+commands/assessment.rs resolves generic leaf names only below a unique device/protocol category, preserving raw XML labels and rejecting mixed/IPv6-ambiguous contexts. Process and AS parameters remain explicit. validator/controls.rs compares one scoped configured scalar through the same typed validation contract, without inferring defaults, neighbor state or effective router ID.
+
+commands/conflicts.rs handles global-versus-port discovery contradictions and canonical interface identities. Device scripts preserve independent passive ports and NTP server addresses; completed contradictory blocks are omitted. The Library clears its draft only when changing families so old hostname or protocol parameters cannot contaminate a new request.

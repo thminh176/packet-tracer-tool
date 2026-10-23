@@ -1,6 +1,6 @@
 # Packet Tracer Tool
 
-Local 0.2.2-dev development: 56 bounded command families, including explicit IPv6/dot1Q checkpoint context, DHCP relay, Serial DCE/PPP, CDP and OSPFv2 controls. This does not certify execution on Packet Tracer devices. See [test evidence](docs/TEST_RESULTS.md) and the [Cisco research matrix](docs/CISCO_EXPANSION_RESEARCH.md). The 0.2.1 bug-fix candidate is kept separately from this expansion branch.
+Local 0.2.2-dev.2 development: 66 bounded command families, including NTP IPv4/IPv6, LLDP, standalone RIP/EIGRP controls and explicit configured-state comparisons. This does not certify execution on Packet Tracer devices. See [test evidence](docs/TEST_RESULTS.md), [protocol/source notes](docs/CISCO_PROTOCOL_CONTROLS.md) and the [Cisco research matrix](docs/CISCO_EXPANSION_RESEARCH.md). The 0.2.1 bug-fix candidate is kept separately from this expansion branch.
 
 [Tiếng Việt](README.vi.md) · [Download Windows release](https://github.com/thminh176/packet-tracer-tool/releases) · [Compatibility](docs/COMPATIBILITY.md)
 

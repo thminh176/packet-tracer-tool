@@ -105,11 +105,67 @@ pub fn request(c: &Checkpoint, resolved: &str) -> Option<CommandRequest> {
             put("address", resolved);
             "router.interface.link_local"
         }
-        "ospfrouterid" => {
+        "lldpglobal" if c.interface.is_empty() => {
+            put("enabled", resolved);
+            "switch.lldp.global"
+        }
+        "lldptransmit" | "lldpreceive" if !c.interface.is_empty() => {
+            put("interface", &c.interface);
+            put(
+                if property == "lldptransmit" {
+                    "transmit"
+                } else {
+                    "receive"
+                },
+                resolved,
+            );
+            "switch.lldp.interface"
+        }
+        "lldpholdtime" | "lldpreinit" | "lldptimer" if c.interface.is_empty() => {
+            put(
+                match property.as_str() {
+                    "lldpholdtime" => "holdtime",
+                    "lldpreinit" => "reinit",
+                    _ => "timer",
+                },
+                resolved,
+            );
+            "switch.lldp.timers"
+        }
+        "ntpserver" if c.interface.is_empty() => {
+            put("server", resolved);
+            "basic.ntp_server"
+        }
+        "ntpsource" if c.interface.is_empty() => {
+            put("interface", resolved);
+            "basic.ntp_source"
+        }
+        "ripversion" if c.interface.is_empty() => {
+            put("version", resolved);
+            "router.rip.version"
+        }
+        "ripautosummary" if c.interface.is_empty() => {
+            put("enabled", resolved);
+            "router.rip.auto_summary"
+        }
+        "rippassiveinterface" | "eigrppassiveinterface" if !c.interface.is_empty() => {
+            put("interface", &c.interface);
+            put("state", resolved);
+            if property == "rippassiveinterface" {
+                "router.rip.passive"
+            } else {
+                "router.eigrp.passive"
+            }
+        }
+        "eigrprouterid" if c.interface.is_empty() => {
+            put("router_id", resolved);
+            "router.eigrp.router_id"
+        }
+        "ospfrouterid" if c.interface.is_empty() => {
             put("router_id", resolved);
             "router.ospf.router_id"
         }
-        "ospfreferencebandwidth" => {
+        "ospfreferencebandwidth" if c.interface.is_empty() => {
             put("mbps", resolved);
             "router.ospf.reference_bandwidth"
         }

@@ -1,5 +1,15 @@
 # Verification and known limits
 
+## 0.2.2-dev.2 protocol coverage (unreleased)
+
+The native Windows x64 build opens the four-checkpoint original synthetic fixture with four explicit matches. Library search switches from hostname to NTP without stale fields; IPv6 server entry blocks script generation until explicit version 4 is supplied. The resulting NTP script was copied and read back from the Windows clipboard exactly. A regression test also checks that a same-family draft is retained. This is application smoke evidence, not a simulator execution test.
+
+`cargo test --locked`: **244 passed, 0 failed, 1 opt-in private test ignored**. Strict all-target Clippy and formatting checks pass. The 10 LLDP worker tests plus 14 protocol/control tests cover source prerequisites, typed fields, profile/mode limits, positive/negative states, IPv6 NTP version requirements, malformed input, correct process identity, semantic aliases and conflict handling. A synthetic full comparison verifies two matching, one mismatching and one incomplete requirement with weighted accounting; this is not native Cisco grading.
+
+The registry contains **66 families** (12 common, 23 switch, 31 router) and **26 declared semantic subsets**. IPv4/IPv6 NTP are one family. Eight additional scalar comparators cover OSPF router ID/reference bandwidth/passive, RIP version/summary/passive and EIGRP ID/passive. LLDP has generation and synthetic mappings but no saved-state/neighbor grader. NTP configuration is not clock synchronization evidence.
+
+Generic assessment labels require one exact protocol category below a unique device; numeric parent IDs are not process IDs. A device named OSPF does not establish a protocol category. Mixed/IPv6-ambiguous categories, unsupported values and missing identity/context remain incomplete or Unverified. All newly added mapping cases are synthetic; no new private activity or actual Packet Tracer execution certification is claimed. See [sources and boundaries](CISCO_PROTOCOL_CONTROLS.md).
+
 ## 0.2.2-dev service coverage (unreleased)
 
 `cargo test --locked`: **218 passed, 0 failed, 1 private opt-in test ignored**. Strict all-target Clippy passes. Eight new service/WAN/OSPF workflows have required-field, syntax/mode, invalid input, profile and injection checks; GUI state tests verify missing cable/peer/process/global-CDP parameters transfer without defaults. The codec and dependency graph are unchanged from the checked 0.2.1 candidate.

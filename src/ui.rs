@@ -211,6 +211,12 @@ fn checkpoint_library_request(c: &Checkpoint) -> Option<cisco::CommandRequest> {
                 | "router.ospf.router_id"
                 | "router.ospf.passive"
                 | "router.ospf.reference_bandwidth"
+                | "router.eigrp.router_id"
+                | "router.eigrp.passive"
+                | "basic.ntp_source"
+                | "basic.ntp_server"
+                | "switch.lldp.interface"
+                | "switch.lldp.timers"
         ) && !plan.missing_parameters.is_empty())
         .then_some(request);
     }
@@ -502,6 +508,12 @@ pub struct InspectorApp {
 }
 
 impl InspectorApp {
+    fn select_library_family(&mut self, id: &str) {
+        if self.library_selected_id.as_deref() != Some(id) {
+            self.library_parameters.clear();
+            self.library_selected_id = Some(id.to_owned());
+        }
+    }
     pub fn new(cc: Option<&eframe::CreationContext>, initial_path: Option<PathBuf>) -> Self {
         let (tx, rx) = channel();
 
@@ -3029,10 +3041,10 @@ impl InspectorApp {
         // Auto-select first spec if current selection is invalid or missing
         if let Some(ref sel_id) = self.library_selected_id {
             if !filtered_specs.iter().any(|s| s.id == sel_id) && !filtered_specs.is_empty() {
-                self.library_selected_id = Some(filtered_specs[0].id.to_string());
+                self.select_library_family(filtered_specs[0].id);
             }
         } else if !filtered_specs.is_empty() {
-            self.library_selected_id = Some(filtered_specs[0].id.to_string());
+            self.select_library_family(filtered_specs[0].id);
         }
 
         // Capture full available size for the two-pane layout before creating child layouts
@@ -3100,13 +3112,7 @@ impl InspectorApp {
                                                 && self.library_selected_id.as_deref()
                                                     != Some(spec.id)
                                             {
-                                                self.library_selected_id =
-                                                    Some(spec.id.to_string());
-                                                for p in &spec.parameters {
-                                                    self.library_parameters
-                                                        .entry(p.name.to_string())
-                                                        .or_default();
-                                                }
+                                                self.select_library_family(spec.id);
                                             }
                                             ui.with_layout(
                                                 egui::Layout::right_to_left(egui::Align::Center),
@@ -4491,6 +4497,47 @@ mod rendering_checks {
     }
 
     #[test]
+    fn ipv6_ntp_and_lldp_completion_leave_unprovided_context_empty() {
+        let ntp = Checkpoint {
+            device: "Synthetic-Router".into(),
+            device_type: "Router".into(),
+            property: "NTP Server".into(),
+            expected: "2001:db8::123".into(),
+            ..Default::default()
+        };
+        let mut request = checkpoint_library_request(&ntp).unwrap();
+        assert_eq!(request.family, "basic.ntp_server");
+        assert_eq!(request.get("server"), "2001:db8::123");
+        assert!(request.get("version").is_empty());
+        assert!(!cisco::generate(&request).executable());
+        request.parameters.insert("version".into(), "4".into());
+        assert!(cisco::generate(&request).executable());
+        let lldp = Checkpoint {
+            device: "Synthetic-Switch".into(),
+            device_type: "Switch".into(),
+            interface: "Gi0/1".into(),
+            property: "LLDP Transmit".into(),
+            expected: "true".into(),
+            evidence: vec!["assessment:device-model=2960".into()],
+            ..Default::default()
+        };
+        let mut request = checkpoint_library_request(&lldp).unwrap();
+        assert_eq!(request.family, "switch.lldp.interface");
+        assert_eq!(request.get("transmit"), "true");
+        for missing in ["receive", "global_enabled", "interface_mode"] {
+            assert!(request.get(missing).is_empty());
+        }
+        assert!(!cisco::generate(&request).executable());
+        request.parameters.extend([
+            ("receive".into(), "false".into()),
+            ("global_enabled".into(), "true".into()),
+            ("interface_mode".into(), "access".into()),
+        ]);
+        assert!(cisco::generate(&request).executable());
+        assert_eq!(lldp.status, Status::Unverified);
+    }
+
+    #[test]
     fn test_extract_network_detail_fields() {
         let cp_static = Checkpoint {
             command_classification: Default::default(),
@@ -4802,6 +4849,47 @@ mod rendering_checks {
             },
         );
         assert!(!output_empty.shapes.is_empty());
+    }
+
+    #[test]
+    fn search_switching_families_clears_stale_fields_without_filling_examples() {
+        let context = egui::Context::default();
+        let mut app = InspectorApp::new(None, None);
+        let specs = cisco::registry();
+        app.library_selected_id = Some("basic.hostname".into());
+        app.library_parameters
+            .insert("hostname".into(), "Synthetic-Device".into());
+        app.library_search_query = "ntp".into();
+        let _ = context.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1280., 820.),
+                )),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    app.render_command_library_content(ui, ctx, &specs);
+                });
+            },
+        );
+        assert_eq!(app.library_selected_id.as_deref(), Some("basic.ntp_server"));
+        assert!(!app.library_parameters.contains_key("hostname"));
+        assert!(
+            app.library_parameters
+                .values()
+                .all(|value| value.is_empty())
+        );
+        app.library_parameters
+            .insert("server".into(), "2001:db8::123".into());
+        app.select_library_family("basic.ntp_server");
+        assert_eq!(
+            app.library_parameters.get("server").unwrap(),
+            "2001:db8::123"
+        );
+        app.select_library_family("router.rip.version");
+        assert!(app.library_parameters.is_empty());
     }
 
     #[test]

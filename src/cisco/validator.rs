@@ -1,6 +1,7 @@
 //! Small explicit-configuration validators. No defaults or operational state are invented.
 use super::{ConfigMode, parser};
 use crate::model::{Checkpoint, Status};
+mod controls;
 pub struct DeviceObservation<'a> {
     pub device: &'a str,
     pub unique_current_snapshot: bool,
@@ -32,6 +33,9 @@ pub fn validate(c: &Checkpoint, observation: &DeviceObservation<'_>) -> Validati
     let config = parser::parse(observation.configuration);
     if !config.reliable {
         return unknown("Configuration contains an unsupported or ambiguous mode");
+    }
+    if let Some(result) = controls::validate(c, &config) {
+        return result;
     }
     let property: String = c
         .property

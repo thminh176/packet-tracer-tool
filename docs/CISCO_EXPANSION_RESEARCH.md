@@ -4,6 +4,8 @@ Researched 2026-10-23 against public Cisco command references and configuration 
 
 ## Evidence boundary
 
+Latest coordinator update: 0.2.2-dev.2 has 66 bounded workflows, adding NTP IPv4/IPv6/source, LLDP and standalone RIP/EIGRP controls, plus eight explicit configured-state comparator subsets (26 declared in total). The baseline rows below are retained as historical research, not current absence claims. See [implementation/source details](CISCO_PROTOCOL_CONTROLS.md) and [LLDP research](CISCO_LLDP_RESEARCH.md). Live simulator execution is still uncertified.
+
 Coordinator implementation update: branch `feature/cisco-services-coverage` adds eight bounded workflows (DHCP relay, serial DCE clock, serial PPP, two CDP states and three OSPFv2 controls). The rows below retain the **47fb1b3 baseline** for comparison. These additions have synthetic generation tests and explicit checkpoint aliases, but no new semantic grading or actual Packet Tracer execution certification. Serial module/cable/peer inputs are explicit operator assertions; this build does not discover them. Standalone RIP, NTP, LLDP and VTP setters remain research opportunities.
 
 The baseline has **46 registered families and zero Packet Tracer execution-certified families** (`CISCO_COMMAND_COVERAGE.md`). A template can generate commands from explicit inputs without having a reliable PKA assessment mapping. Cisco documentation establishes syntax and behavior on its named software/hardware, not the simulated feature inventory of PT. **Every row below remains uncertified in real PT execution.** No private PKA, exam, device session, or restrictive source was used.
